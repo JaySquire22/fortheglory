@@ -520,9 +520,27 @@ function buzz(p){ try{ navigator.vibrate && navigator.vibrate(p); }catch(e){} }
 /* =========================================================
    SENSORS
    ========================================================= */
-const sensor = { beta:null, gamma:null, rateY:0, rateX:0, lastMotion:0, ok:false };
+const sensor = { beta:null, gamma:null, rateY:0, rateX:0, lastMotion:0, ok:false, gPitch:null, gAt:0, gSign:1 };
 function onOrient(e){ if(e.beta!=null){ sensor.beta=e.beta; sensor.gamma=e.gamma; sensor.ok=true; } }
-function onMotion(e){ const r=e.rotationRate; if(r){ sensor.rateY = r.gamma||0; sensor.rateX = r.beta||0; sensor.lastMotion=performance.now(); } }
+// Gravity-based pitch: 90 = phone upright facing you, 0 = flat, -90 = top of phone pointing at the ground.
+// Works the same however the screen faces, and self-corrects browsers (iPhone) that flip the sign.
+function onMotion(e){
+  const r=e.rotationRate; if(r && (r.gamma!=null || r.beta!=null)){ sensor.rateY = r.gamma||0; sensor.rateX = r.beta||0; sensor.lastMotion=performance.now(); }
+  const g=e.accelerationIncludingGravity;
+  if(g && g.y!=null){
+    const gy=g.y*sensor.gSign, gz=(g.z||0)*sensor.gSign;
+    if(Math.hypot(g.x||0,g.y,g.z||0) > 3){
+      const p = Math.atan2(gy, gz)*180/Math.PI;
+      sensor.gPitch = sensor.gPitch==null ? p : sensor.gPitch + (p - sensor.gPitch)*0.35;   // smooth
+      sensor.gAt = performance.now(); sensor.ok = true;
+    }
+  }
+}
+// Best available pitch reading in degrees
+function pitchNow(){
+  if(sensor.gPitch!=null && performance.now()-sensor.gAt < 400) return sensor.gPitch;
+  return sensor.beta;
+}
 async function enableSensors(){
   try{
     if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){
@@ -537,7 +555,11 @@ async function enableSensors(){
   window.addEventListener('devicemotion', onMotion);
   // wait briefly for a first reading
   const t0 = performance.now();
-  while(!sensor.ok && performance.now()-t0 < 1200) await new Promise(r=>setTimeout(r,60));
+  while(!sensor.ok && performance.now()-t0 < 1500) await new Promise(r=>setTimeout(r,60));
+  // You're looking at the screen when you tap Duel, so the phone is roughly upright:
+  // if gravity reads "upside down" right now, this browser reports it inverted.
+  await new Promise(r=>setTimeout(r,150));
+  if(sensor.gPitch!=null && sensor.gPitch < -20){ sensor.gSign *= -1; sensor.gPitch = -sensor.gPitch; }
   return sensor.ok;
 }
 
@@ -612,11 +634,13 @@ function setMsg(a,b,dur){ D.msg=a; D.msgSub=b||''; D.msgT=performance.now()+(dur
 
 function isHolstered(){
   if(D.mode==='touch') return D.pointerDown;
-  return sensor.beta!=null && sensor.beta < -40 && sensor.beta > -150;
+  const p = pitchNow();
+  return p!=null && p < -35 && p > -150;
 }
 function isRaised(){
   if(D.mode==='touch') return !D.pointerDown;
-  return sensor.beta!=null && sensor.beta > 25;
+  const p = pitchNow();
+  return p!=null && p > 20;
 }
 
 function loop(now){
@@ -671,7 +695,7 @@ function update(now, dt){
       if(fresh){ me.yaw += inv * sensor.rateY * dt/1000 * ppd; }
       else if(sensor.gamma!=null){ me.yaw = inv * (sensor.gamma - me.gamma0) * ppd; }  // no gyro: use side tilt
       me.aimX = clamp(me.aimX0 + me.yaw, -W*1.1, W*1.1);
-      const pitch = sensor.beta!=null ? sensor.beta : store.settings.grip;
+      const pitch = pitchNow() ?? store.settings.grip;
       me.aimY = clamp((store.settings.grip - pitch) * ppd, -H, H*1.2);
     }
     me.recoil *= Math.pow(0.0025, dt/1000);
@@ -956,7 +980,7 @@ function drawOpponent(c, now){
   c.fillStyle='rgba(0,0,0,.35)'; c.fillRect(-22,-266,44,5);
   c.restore();
   // name tag above head (only before draw)
-  if(D.phase==='holster' || D.phase==='steady'){
+  if(D.phase==='steady'){
     c.font=`${Math.max(12,H*0.02)|0}px Rye, Georgia, serif`; c.textAlign='center'; c.fillStyle='rgba(0,0,0,.55)';
     const ty = g.feet - g.h*1.03;
     c.fillText(o.name, g.x+1, ty+1); c.fillStyle='#fff3d6'; c.fillText(o.name, g.x, ty);
@@ -1032,6 +1056,11 @@ function drawHUD(c, now){
     c.fillStyle = ok ? '#8fbf3f' : '#ffb35a';
     const t = D.mode==='motion' ? (ok ? '● Holstered — stay still' : '○ Point the phone at the ground') : (ok ? '● Holding — wait for it' : '○ Hold a finger on the screen');
     c.fillText(t, W/2, H*0.86);
+    if(D.mode==='motion'){
+      const p = pitchNow();
+      c.font=`${Math.max(11,H*0.016)|0}px "Roboto Condensed", sans-serif`; c.fillStyle='rgba(255,255,255,.8)';
+      c.fillText(p==null ? 'No tilt reading from your phone' : `Tilt ${Math.round(p)}° (needs below -35°)`, W/2, H*0.86 + Math.max(18,H*0.03));
+    }
   }
   if(D.phase==='draw' && D.me.drawnAt!=null && performance.now() < D.me.drawnAt + 1200){
     c.textAlign='center'; c.font=`700 ${Math.max(14,H*0.024)|0}px "Roboto Condensed", sans-serif`; c.fillStyle='#ffde59';

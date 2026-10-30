@@ -211,20 +211,22 @@ const ARCH = {
   mg:      {label:'Machine gun',     draw:600, rof:85,   mag:60, dmg:13, sway:1.7, pellets:1, spread:13, reload:2200, recoil:7,  len:58},
   heavy:   {label:'Heavy artillery', draw:850, rof:1500, mag:1,  dmg:130,sway:1.4, pellets:1, spread:0,  reload:2500, recoil:60, len:62, splash:55},
 };
-const ZONE_MULT = {head:3.0, torso:1.0, arm:0.6, leg:0.6};
+const ZONE_MULT = {head:2.0, torso:1.0, arm:0.6, leg:0.6};
+// Damage scaling so fights last longer (pistol ~11 body shots, rifle ~6)
+const PLAYER_DMG = 0.25, NPC_DMG = 0.30;
 const SPARE_CLIPS = 2;
 
 // Torn's NPCs (used with permission). card = portrait image in /npc
 const NPCS = [
-  {id:'jimmy',    name:'Jimmy',    title:'Jimmy Two-Shins',     card:'npc/jimmy.jpg',    weapon:'pistol', react:950, acc:0.30, life:2000000, speed:0.07, stars:1,
+  {id:'jimmy',    name:'Jimmy',    title:'Jimmy Two-Shins',     card:'npc/jimmy.jpg',    weapon:'pistol', react:850, acc:0.34, life:2000000, speed:0.10, stars:1,
    look:{skin:'#dcbba5', hair:{style:'short',color:'#9a5530'}, beard:'#8a4a2a', top:{color:'#6a1a1a'}, vest:{color:'#2a2c30',type:'vest'}, coat:{color:'#2a2a2d'}, pants:{color:'#c3c8d2'}, boots:{color:'#4a2e1e'}}},
-  {id:'fernando', name:'Fernando', title:'Fingers Fernando',    card:'npc/fernando.jpg', weapon:'shotgun',react:780, acc:0.40, life:2500000, speed:0.09, stars:2,
+  {id:'fernando', name:'Fernando', title:'Fingers Fernando',    card:'npc/fernando.jpg', weapon:'shotgun',react:700, acc:0.40, life:2500000, speed:0.14, stars:2,
    look:{skin:'#c9a184', hair:{style:'long',color:'#2a2622'}, beard:'#2a2622', mask:{type:'eyes',color:'#111'}, sleeves:'#5a3a28', poncho:{color:'#9a9a9a',color2:'#4e4e4e'}, pants:{color:'#2a2a2c'}, boots:{color:'#111'}}},
-  {id:'leslie',   name:'Leslie',   title:'Leslie Chanthavong',  card:'npc/leslie.jpg',   weapon:'smg',    react:640, acc:0.48, life:4000000, speed:0.15, stars:3,
+  {id:'leslie',   name:'Leslie',   title:'Leslie Chanthavong',  card:'npc/leslie.jpg',   weapon:'smg',    react:580, acc:0.46, life:4000000, speed:0.19, stars:3,
    look:{skin:'#e6d3c8', hair:{style:'short',color:'#ececec'}, glasses:true, mask:{type:'face',color:'#3a6fd0'}, top:{color:'#111',pattern:'mesh'}, pants:{color:'#e2e2e2'}, boots:{color:'#111'}}},
-  {id:'tiny',     name:'Tiny',     title:'Tiny Tears',          card:'npc/tiny.jpg',     weapon:'rifle',  react:540, acc:0.57, life:4500000, speed:0.12, stars:4,
+  {id:'tiny',     name:'Tiny',     title:'Tiny Tears',          card:'npc/tiny.jpg',     weapon:'rifle',  react:480, acc:0.52, life:4500000, speed:0.23, stars:4,
    look:{skin:'#dcb7a8', build:1.12, hair:{style:'bald'}, top:{color:'#efefef'}, sleeves:'#efefef', vest:{color:'#5d5a4a',camo:'#7a7560',type:'vest'}, pants:{color:'#262628'}, boots:{color:'#111'}}},
-  {id:'duke',     name:'Duke',     title:'Duke Calabrese',      card:'npc/duke.jpg',     weapon:'mg',     react:440, acc:0.62, life:5500000, speed:0.11, stars:5,
+  {id:'duke',     name:'Duke',     title:'Duke Calabrese',      card:'npc/duke.jpg',     weapon:'mg',     react:400, acc:0.58, life:5500000, speed:0.28, stars:5,
    look:{skin:'#d7b4a2', hair:{style:'bald'}, helmet:{style:'flatcap',color:'#a8a49a'}, top:{color:'#4a3424'}, coat:{color:'#b8864e'}, pants:{color:'#5a5a5a',stripes:true}, boots:{color:'#3a2a20'}}},
 ];
 
@@ -358,11 +360,18 @@ function setColor(n){
   if(/kevlar|bullet|flak|vest|police|swat/.test(n)) return {base:'#222326', visor:'#333'};
   return {base:'#3d4148', visor:'#222'};
 }
+function itemColor(n){
+  if(/combat pants|combat trousers/.test(n)) return {base:'#a7a398', camo:'#6e6a60'};      // urban camo
+  if(/combat boots/.test(n)) return {base:'#d9d5cc'};
+  if(/combat gloves/.test(n)) return {base:'#1c1c1c'};
+  if(/bulletproof|kevlar/.test(n)) return {base:'#202124'};
+  return setColor(n);
+}
 function lookFromArmour(armour){
-  const L = {skin:'#cdbcae', hair:{style:'short',color:'#3a2e26'}, top:{color:'#e9e9e9'}, pants:{color:'#4a4d55'}, boots:{color:'#2a2a2a'}};
+  const L = {skin:'#dcc6b8', build:1.08, hair:{style:'short',color:'#3a2e26'}, top:{color:'#e9e9e9'}, pants:{color:'#4a4d55'}, boots:{color:'#2a2a2a'}};
   for(const a of armour||[]){
-    const n = a.name.toLowerCase(), col = setColor(n);
-    if(/helmet|hat|mask|visor|cap|hood/.test(n)) L.helmet = {color:col.base, visor:col.visor, style:/motorcycle|riot|sentinel|eod|full/.test(n)?'full':/cap|hat/.test(n)?'cap':'combat'};
+    const n = a.name.toLowerCase(), col = itemColor(n);
+    if(/helmet|hat|mask|visor|cap|hood/.test(n)) L.helmet = {color:col.base, visor:col.visor, style:/motorcycle/.test(n)?'moto':/riot|sentinel|eod|full/.test(n)?'full':/cap|hat/.test(n)?'cap':'combat'};
     else if(/glove/.test(n)) L.gloves = {color:col.base};
     else if(/boot|shoe/.test(n)) L.boots = {color:col.base};
     else if(/pant|trouser|leg|kilt|skirt|short/.test(n)) L.pants = {color:col.base, camo:col.camo};
@@ -385,13 +394,18 @@ function camoFill(c, base, camo, seed){
   if(!camo) return;
   let s = seed||7; const rnd = ()=> (s = (s*9301+49297)%233280)/233280;
   c.fillStyle = camo;
-  for(let i=0;i<22;i++){ c.beginPath(); c.ellipse(-60+rnd()*120, -300+rnd()*300, 6+rnd()*10, 3+rnd()*7, rnd()*3, 0, 7); c.fill(); }
-  c.fillStyle = shade(base,-0.35);
-  for(let i=0;i<14;i++){ c.beginPath(); c.ellipse(-60+rnd()*120, -300+rnd()*300, 4+rnd()*7, 2+rnd()*5, rnd()*3, 0, 7); c.fill(); }
+  for(let i=0;i<60;i++){ c.beginPath(); c.ellipse(-60+rnd()*120, -320+rnd()*480, 5+rnd()*8, 3+rnd()*6, rnd()*3, 0, 7); c.fill(); }
+  c.fillStyle = shade(base,-0.45);
+  for(let i=0;i<40;i++){ c.beginPath(); c.ellipse(-60+rnd()*120, -320+rnd()*480, 3+rnd()*6, 2+rnd()*4, rnd()*3, 0, 7); c.fill(); }
 }
 function limb(c, x1,y1,x2,y2,w1,w2,color){
   const a = Math.atan2(y2-y1, x2-x1), nx = -Math.sin(a), ny = Math.cos(a);
-  c.fillStyle = color; c.beginPath();
+  if(/^#/.test(color)){
+    const g = c.createLinearGradient(x1+nx*w1/2, y1+ny*w1/2, x1-nx*w1/2, y1-ny*w1/2);
+    g.addColorStop(0, shade(color,-0.28)); g.addColorStop(0.45, shade(color,0.1)); g.addColorStop(1, shade(color,-0.18));
+    c.fillStyle = g;
+  } else c.fillStyle = color;
+  c.beginPath();
   c.moveTo(x1+nx*w1/2, y1+ny*w1/2); c.lineTo(x2+nx*w2/2, y2+ny*w2/2);
   c.arc(x2, y2, w2/2, a+Math.PI/2, a-Math.PI/2, true);
   c.lineTo(x1-nx*w1/2, y1-ny*w1/2); c.arc(x1, y1, w1/2, a-Math.PI/2, a+Math.PI/2, true);
@@ -413,15 +427,20 @@ function drawFigure(c, L, P){
     const bt = (L.boots && L.boots.color) || '#2a2a2a';
     c.fillStyle = bt; c.beginPath(); c.moveTo(-10,128); c.lineTo(10,128); c.lineTo(12+side*3,150); c.lineTo(-12+side*3,150); c.closePath(); c.fill();
     c.fillStyle='rgba(255,255,255,.12)'; c.fillRect(-10,129,20,3);
+    c.strokeStyle='rgba(0,0,0,.45)'; c.lineWidth=1.2; for(let ly=132; ly<146; ly+=4){ c.beginPath(); c.moveTo(-4,ly); c.lineTo(4,ly+2); c.moveTo(4,ly); c.lineTo(-4,ly+2); c.stroke(); }
+    c.fillStyle='rgba(0,0,0,.35)'; c.fillRect(-13+side*3,147,26,3);
     c.restore();
   }
   // hips
-  c.fillStyle = pants; c.beginPath(); c.moveTo(-31*B,-166); c.lineTo(31*B,-166); c.lineTo(29*B,-140); c.lineTo(-29*B,-140); c.closePath(); c.fill();
+  c.save(); c.fillStyle = pants; c.beginPath(); c.moveTo(-31*B,-166); c.lineTo(31*B,-166); c.lineTo(29*B,-140); c.lineTo(-29*B,-140); c.closePath(); c.fill(); c.clip(); camoFill(c, pants, L.pants&&L.pants.camo, 31); c.restore();
   c.fillStyle = '#1a1a1a'; c.fillRect(-31*B,-168,62*B,7);
   // torso (skin)
   c.fillStyle = skin; c.beginPath(); c.moveTo(-40*B,-246); c.lineTo(40*B,-246); c.quadraticCurveTo(36*B,-200,29*B,-164); c.lineTo(-29*B,-164); c.quadraticCurveTo(-36*B,-200,-40*B,-246); c.fill();
+  { const tg = c.createLinearGradient(-40,0,40,0); tg.addColorStop(0,'rgba(0,0,0,.22)'); tg.addColorStop(.45,'rgba(255,255,255,.06)'); tg.addColorStop(1,'rgba(0,0,0,.28)');
+    c.fillStyle = tg; c.beginPath(); c.moveTo(-40*B,-246); c.lineTo(40*B,-246); c.quadraticCurveTo(36*B,-200,29*B,-164); c.lineTo(-29*B,-164); c.quadraticCurveTo(-36*B,-200,-40*B,-246); c.fill();
+    c.strokeStyle='rgba(0,0,0,.15)'; c.lineWidth=1.5; c.beginPath(); c.moveTo(-26,-214); c.quadraticCurveTo(-12,-206,0,-214); c.quadraticCurveTo(12,-206,26,-214); c.moveTo(0,-232); c.lineTo(0,-168); c.stroke(); }
   // tank top
-  if(L.top && !(L.vest && L.vest.type!=='vest')){
+  if(L.top && !L.vest && !L.coat){
     c.save();
     c.beginPath(); c.moveTo(-24*B,-244); c.lineTo(-14*B,-244); c.quadraticCurveTo(0,-226,14*B,-244); c.lineTo(24*B,-244); c.quadraticCurveTo(33*B,-200,30*B,-162); c.lineTo(-30*B,-162); c.quadraticCurveTo(-33*B,-200,-24*B,-244);
     if(L.top.pattern==='mesh'){
@@ -466,13 +485,16 @@ function drawFigure(c, L, P){
   const sleeve = L.coat ? L.coat.color : (V && V.type!=='vest' ? V.color : (L.sleeves || null));
   const glove = L.gloves ? L.gloves.color : skin;
   for(const side of [-1,1]){
-    const gunSide = side===1, sx = side*40*B, sy = -238;
-    let hx = side*50*B, hy = -128;
+    const gunSide = side===1, sx = side*41*B, sy = -238;
+    // Torn-style A-pose when relaxed
+    let hx = side*(P.apose ? 76 : 52)*B, hy = P.apose ? -148 : -128;
     if(gunSide){ hx = hx + (10 - hx)*k; hy = hy + (-206 - hy)*k; }
     else if(P.twoHand && k>0.4){ const t=(k-0.4)/0.6; hx = hx + (-4 - hx)*t; hy = hy + (-198 - hy)*t; }
-    const ex = (sx+hx)/2 + side*8*(1-k*0.6), ey = (sy+hy)/2 + 4;
-    limb(c, sx,sy, ex,ey, 17*B, 15*B, sleeve || skin);
-    limb(c, ex,ey, hx,hy, 15*B, 12*B, sleeve && !L.gloves ? sleeve : (sleeve||skin));
+    const ex = (sx+hx)/2 + side*5*(1-k*0.6), ey = (sy+hy)/2 + 3;
+    // deltoid
+    if(!sleeve){ c.fillStyle = skin; c.beginPath(); c.ellipse(sx - side*2, sy+4, 13*B, 15, side*0.4, 0, 7); c.fill(); }
+    limb(c, sx,sy+2, ex,ey, 21*B, 16*B, sleeve || skin);
+    limb(c, ex,ey, hx,hy, 17*B, 12*B, sleeve || skin);
     if(!sleeve){ c.fillStyle='rgba(0,0,0,.12)'; c.beginPath(); c.arc(ex,ey,5,0,7); c.fill(); }
     // gun in hand
     if(gunSide && P.gunLen && k>0.02){
@@ -485,7 +507,8 @@ function drawFigure(c, L, P){
       }
       c.restore();
     }
-    c.fillStyle = glove; c.beginPath(); c.arc(hx,hy,7.5*B,0,7); c.fill();
+    c.fillStyle = glove; c.beginPath(); c.ellipse(hx,hy+3,7*B,10,Math.atan2(hy-ey,hx-ex)-Math.PI/2,0,7); c.fill();
+    c.fillStyle='rgba(0,0,0,.18)'; c.beginPath(); c.ellipse(hx+side*2,hy+5,3,7,0,0,7); c.fill();
   }
   // poncho over shoulders and arms
   if(L.poncho){
@@ -526,7 +549,19 @@ function drawFigure(c, L, P){
   }
   if(H){
     c.fillStyle = H.color;
-    if(H.style==='full'){
+    if(H.style==='moto'){
+      c.beginPath(); c.ellipse(0,-280,22,26,0,0,7); c.fill();
+      c.strokeStyle='rgba(0,0,0,.25)'; c.lineWidth=1.5; c.stroke();
+      // face opening
+      c.fillStyle = skin; c.beginPath(); c.ellipse(0,-273,13.5,15,0,0,7); c.fill();
+      c.fillStyle='#1d1612'; c.beginPath(); c.ellipse(-5.5,-278,2.1,1.5,0,0,7); c.ellipse(5.5,-278,2.1,1.5,0,0,7); c.fill();
+      c.strokeStyle='rgba(40,25,20,.7)'; c.lineWidth=1.4; c.beginPath(); c.moveTo(-9,-282.5); c.lineTo(-3,-283); c.moveTo(3,-283); c.lineTo(9,-282.5); c.stroke();
+      c.strokeStyle='rgba(90,40,35,.8)'; c.lineWidth=1.6; c.beginPath(); c.moveTo(-4,-265); c.lineTo(4,-265); c.stroke();
+      // chin bar + visor flipped up
+      c.fillStyle = H.color; c.beginPath(); c.moveTo(-14,-262); c.quadraticCurveTo(0,-250,14,-262); c.lineTo(15,-256); c.quadraticCurveTo(0,-244,-15,-256); c.closePath(); c.fill();
+      c.fillStyle = 'rgba(40,40,45,.85)'; c.beginPath(); c.moveTo(-17,-292); c.quadraticCurveTo(0,-302,17,-292); c.lineTo(15,-286); c.quadraticCurveTo(0,-294,-15,-286); c.closePath(); c.fill();
+      c.fillStyle='rgba(255,255,255,.35)'; c.beginPath(); c.ellipse(-12,-292,4,8,0.5,0,7); c.fill();
+    } else if(H.style==='full'){
       c.beginPath(); c.ellipse(0,-279,21,25,0,0,7); c.fill();
       c.fillStyle = H.visor || '#222'; c.beginPath(); c.moveTo(-16,-287); c.quadraticCurveTo(0,-292,16,-287); c.lineTo(15,-268); c.quadraticCurveTo(0,-264,-15,-268); c.closePath(); c.fill();
       c.fillStyle='rgba(255,255,255,.25)'; c.beginPath(); c.ellipse(-7,-281,4,7,0.3,0,7); c.fill();
@@ -626,7 +661,7 @@ function drawLobbyFigure(){
   const w = cv.clientWidth, h = cv.clientHeight, s = (h*0.86)/315;
   c.fillStyle='rgba(0,0,0,.35)'; c.beginPath(); c.ellipse(w/2, h-14, 48, 7, 0, 0, 7); c.fill();
   c.save(); c.translate(w/2, h-14); c.scale(s,s);
-  drawFigure(c, myLook, {aim:0});
+  drawFigure(c, myLook, {aim:0, apose:true});
   c.restore();
 }
 function npcThumb(o){
@@ -906,7 +941,7 @@ function update(now, dt){
       if(op.state==='aiming' && now >= op.nextShot && now >= op.flinchUntil) aiShoot(now);
       strafe(now, dt);
     }
-    if(!D.roundOver && now - D.phaseT > 20000) finishRound(me.hp >= op.hp ? 'win':'lose', 'Time ran out', now);
+    if(!D.roundOver && now - D.phaseT > 40000) finishRound(me.hp >= op.hp ? 'win':'lose', 'Time ran out', now);
   }
   if(op.dead) op.v *= 0.9;
   D.particles = D.particles.filter(p=>{ p.t += dt; p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 0.0006*dt; return p.t < p.life; });
@@ -942,10 +977,12 @@ function strafe(now, dt){
   const range = W*0.30, sp = D.opp.speed * W / 1000;     // px per ms
   if(Math.abs(op.tx - op.x) < 4 || !op.moving){
     op.moving = true;
-    if(Math.random() < 0.25) op.pauseUntil = now + 250 + Math.random()*500;
+    if(Math.random() < 0.3 - (D.opp.stars||1)*0.04) op.pauseUntil = now + 200 + Math.random()*450;
     op.tx = (Math.random()*2-1) * range;
+    op.jukeAt = now + 500 + Math.random()*(1600 - (D.opp.stars||1)*220);
   }
   if(op.pauseUntil && now < op.pauseUntil){ op.v *= 0.8; return; }
+  if(op.jukeAt && now > op.jukeAt){ op.tx = (Math.random()*2-1) * range; op.jukeAt = now + 500 + Math.random()*(1600 - (D.opp.stars||1)*220); }
   const dir = Math.sign(op.tx - op.x);
   op.v += (dir*sp - op.v) * Math.min(1, dt/120);
   op.x += op.v * dt;
@@ -981,13 +1018,13 @@ function playerFire(sx, sy){
     const a = Math.random()*Math.PI*2, r = Math.sqrt(Math.random())*w.spread*(W/400);
     const px = cx + Math.cos(a)*r, py = cy + Math.sin(a)*r;
     const z = hitTest(px, py), wp = toWorld(px, py);
-    if(z){ total += w.dmg * ZONE_MULT[z]; if(!best || ZONE_MULT[z]>ZONE_MULT[best]) best=z; puff(wp.x,wp.y,'#a0201a'); }
+    if(z){ total += w.dmg * ZONE_MULT[z] * PLAYER_DMG; if(!best || ZONE_MULT[z]>ZONE_MULT[best]) best=z; puff(wp.x,wp.y,'#a0201a'); }
     else { D.holes.push(wp); puff(wp.x,wp.y,'#8a8a8a'); }
   }
   if(!total && w.splash){
     const g = oppGeom(), wc = toWorld(cx, cy); const d = Math.hypot(wc.x - g.x, wc.y - (g.feet - g.h*0.5));
     const rad = w.splash*(W/400) + g.h*0.3;
-    if(d < rad && !D.op.dead){ total = w.dmg * 0.7 * (1 - d/rad); best='torso'; }
+    if(d < rad && !D.op.dead){ total = w.dmg * 0.7 * PLAYER_DMG * (1 - d/rad); best='torso'; }
     for(let i=0;i<20;i++) puff(wc.x,wc.y,i%2?'#f2a03a':'#555');
   }
   if(total>0){
@@ -1012,7 +1049,8 @@ function aiShoot(now){
   const op = D.op, ow = D.oppW, me = D.me;
   if(op.ammo<=0){ op.ammo = ow.mag; op.nextShot = now + ow.reload; return; }
   op.ammo--; op.lastFire = now; sfxBang(false, true);
-  op.nextShot = now + ow.rof * (1 + Math.random()*0.6) + 60;
+  const pace = 1 - ((D.opp.stars||1)-1)*0.09;            // 1.0 → 0.64 across the five tiers
+  op.nextShot = now + (ow.rof * (1 + Math.random()*0.6) + 60) * pace;
   let acc = D.opp.acc;
   if(op.hp < 50) acc *= 0.85;
   if(Math.abs(op.v) > 0.05) acc *= 0.85;               // shooting on the move
@@ -1026,7 +1064,7 @@ function aiShoot(now){
     }
   }
   if(dmg>0){
-    dmg *= (1 - D.armour.reduce);
+    dmg *= (1 - D.armour.reduce) * NPC_DMG;
     me.hp -= dmg; me.hurt = Math.min(1, me.hurt + dmg/60); D.hurtFlash = 1; D.shake = 1; buzz(80); sfxHit();
     if(me.hp<=0) finishRound('lose', zone==='head' ? `${D.opp.name} landed a headshot` : `${D.opp.name} was quicker`, now);
   }
@@ -1187,7 +1225,7 @@ function drawOpponent(c, now){
   if(op.state==='drawing') aim = clamp((now - op.stateT)/D.oppW.draw, 0, 1)*0.9;
   else if(op.state==='aiming') aim = 1;
   const idle = (D.phase==='holster'||D.phase==='steady') ? Math.sin(now/600)*0.15 : 0;
-  drawFigure(c, o.look, { aim, walk: op.walk + idle, gunLen: D.oppW.len, twoHand: ['rifle','shotgun','mg','smg','heavy'].includes(o.weapon), flash: now - op.lastFire < 70 });
+  drawFigure(c, o.look, { aim, apose: op.state==='idle' || op.state==='waiting', walk: op.walk + idle, gunLen: D.oppW.len, twoHand: ['rifle','shotgun','mg','smg','heavy'].includes(o.weapon), flash: now - op.lastFire < 70 });
   c.restore();
   if(D.phase==='steady' || D.phase==='holster'){
     c.font=`bold ${Math.max(12,H*0.018)|0}px Arial`; c.textAlign='center'; c.textBaseline='alphabetic';

@@ -44,6 +44,8 @@ button:disabled{opacity:.5}
 .slot .ss{font-size:11px;color:var(--muted)}
 .slot.sel{background:linear-gradient(180deg,#5c5c2a,#45451c);border-color:#7a7a33}
 .slot.off{opacity:.45;cursor:default}
+.slot.tempslot{border-color:#4a4a6a}
+#tempPicker .slot{margin:3px 0}
 .who{margin-bottom:6px}
 .who .nm{font-weight:bold;font-size:17px;color:#fff}
 .who .mt{font-size:12px;color:var(--muted)}
@@ -79,8 +81,9 @@ button:disabled{opacity:.5}
 .dslot img{width:84px;height:38px;object-fit:contain;display:block;margin:0 auto 2px}
 .dslot.sel{background:linear-gradient(180deg,rgba(92,92,42,.92),rgba(69,69,28,.92));border-color:#8a8a3a}
 .dslot.empty{color:#888}
-.dslot.temp{background:rgba(40,40,48,.88)}
+.dslot.temp{background:rgba(40,40,60,.9);border-color:#6a6aa0;font-size:10px}
 .dslot.temp.empty{opacity:.45}
+#recentreBtn{position:absolute;right:8px;bottom:calc(env(safe-area-inset-bottom) + 100px);width:auto;margin:0;padding:10px 12px;font-size:12px;z-index:3;display:none;background:rgba(40,40,40,.85)}
 #readyBtn{position:absolute;left:50%;bottom:22%;transform:translateX(-50%);width:70%;max-width:320px;margin:0;padding:16px;font-size:20px;z-index:4;display:none;background:linear-gradient(180deg,#8fb32e,#5e7d12);color:#fff}
 #reloadBtn{position:absolute;right:8px;bottom:calc(env(safe-area-inset-bottom) + 52px);width:auto;margin:0;padding:12px 14px;font-size:13px;z-index:3;display:none;background:linear-gradient(180deg,#5a5a5a,#383838)}
 #reloadBtn.urgent{background:linear-gradient(180deg,#d9472b,#8a2414);color:#fff;animation:pulse .6s infinite alternate}
@@ -136,6 +139,7 @@ details summary{cursor:pointer;color:#7aa7d8;font-size:13px;margin-top:10px}
         <div class="figbox"><canvas id="figCv"></canvas></div>
         <div class="slots" id="slots"></div>
       </div>
+      <div id="tempPicker" style="display:none;max-height:260px;overflow:auto;margin-top:6px;border:1px solid #111;border-radius:4px;background:#1e1e1e;padding:4px"></div>
       <div class="armr" id="armr"></div>
       <div class="bars" id="gunBars"></div>
       <div class="stats" id="pRecord"></div>
@@ -194,6 +198,7 @@ details summary{cursor:pointer;color:#7aa7d8;font-size:13px;margin-top:10px}
   <button id="quit">✕ Leave</button>
   <button id="reloadBtn">RELOAD</button>
   <button id="readyBtn">READY</button>
+  <button id="recentreBtn">⌖ RE-CENTRE</button>
 </div>
 
 <script>
@@ -740,6 +745,21 @@ $('btnRefresh').onclick = async ()=>{
 
 let loadout = buildLoadout([]);
 let myLook = lookFromArmour([]);
+function currentTemp(){ return loadout.temporary || store.tempPick || null; }
+const TEMP_CHOICES = ['Flash Grenade','Smoke Grenade','Tear Gas','Pepper Spray','Grenade','HEG','Molotov Cocktail','Concussion Grenade','Epinephrine','Melatonin','Serotonin','Tyrosine'];
+let tornTemps = null;   // [{id,name}] from Torn's item list
+async function loadTornTemps(){
+  if(tornTemps || !store.key) return tornTemps;
+  try{ const c = JSON.parse(localStorage.getItem(LS+'.temps')||'null'); if(c && c.length){ tornTemps = c; return c; } }catch(e){}
+  try{
+    let items = null;
+    try{ const j = await tornGet('/v2/torn/items?cat=Temporary', store.key); items = (j.items||[]).map(i=>({id:i.id, name:i.name})); }
+    catch(e){ const j = await tornGet('/torn?selections=items', store.key); items = Object.entries(j.items||{}).filter(([id,i])=>i.type==='Temporary').map(([id,i])=>({id:Number(id), name:i.name})); }
+    tornTemps = items.filter(i=> TEMP_CHOICES.some(n=> i.name.toLowerCase()===n.toLowerCase()) || /grenade|gas|spray|molotov/i.test(i.name));
+    try{ localStorage.setItem(LS+'.temps', JSON.stringify(tornTemps)); }catch(e){}
+  }catch(e){ tornTemps = null; }
+  return tornTemps;
+}
 function usableGuns(){ return loadout.guns.length ? loadout.guns : [GUEST_GUN]; }
 function currentGun(){ const g = usableGuns(); return g.find(x=>String(x.id)===String(store.gun)) || g[0]; }
 
@@ -765,13 +785,13 @@ function renderSlots(){
     if(loadout.primary) rows.push(gunRow(loadout.primary,'Primary'));
     if(loadout.secondary) rows.push(gunRow(loadout.secondary,'Secondary'));
   } else rows.push(gunRow(GUEST_GUN, store.key ? 'No gun equipped' : 'Guest'));
-  for(const [k,lbl] of [['melee','Melee'],['temporary','Temporary']]){
-    const it = loadout[k];
-    const ti = k==='temporary' ? tempInfo(it) : null;
-    rows.push(`<div class="slot off" style="${ti?'opacity:1':''}">${itemImg(it&&it.id)}<div style="min-width:0"><div class="sn">${it?esc(it.name):'—'}</div><div class="ss">${lbl} · ${ti ? '1 per round · '+ti.desc : (it?'not used in duels':'none equipped')}</div></div></div>`);
-  }
+  { const it = loadout.melee;
+    rows.push(`<div class="slot off">${itemImg(it&&it.id)}<div style="min-width:0"><div class="sn">${it?esc(it.name):'—'}</div><div class="ss">Melee · ${it?'not used in duels':'none equipped'}</div></div></div>`); }
+  { const it = currentTemp(), ti = tempInfo(it), equipped = !!loadout.temporary;
+    rows.push(`<div class="slot tempslot" id="tempSlot">${itemImg(it&&it.id)}<div style="min-width:0"><div class="sn">${it?esc(it.name):'Pick a temporary'}</div><div class="ss">Temporary · ${ti ? '1 per round · '+ti.desc : 'tap to choose one'}${equipped?' · equipped in Torn':' · tap to change'}</div></div></div>`); }
   $('slots').innerHTML = rows.join('');
-  $('slots').querySelectorAll('.slot:not(.off)').forEach(el=> el.onclick = ()=>{ store.gun = el.dataset.id; save(); renderSlots(); });
+  const ts = $('tempSlot'); if(ts && !loadout.temporary) ts.onclick = openTempPicker;
+  $('slots').querySelectorAll('.slot:not(.off):not(.tempslot)').forEach(el=> el.onclick = ()=>{ store.gun = el.dataset.id; save(); renderSlots(); });
   const ar = armourStats(loadout.armour);
   $('armr').innerHTML = loadout.armour.length
     ? `Armour: ${loadout.armour.map(a=>esc(a.name)).join(', ')} — soaks <b>${Math.round(ar.reduce*100)}%</b> damage${ar.helmet?', helmet halves headshots':''}`
@@ -779,6 +799,13 @@ function renderSlots(){
   const w = weaponStats(cur);
   const bar = (lbl,v)=>`<span>${lbl}</span><div class="bar"><i style="width:${Math.round(clamp(v,0.05,1)*100)}%"></i></div>`;
   $('gunBars').innerHTML = bar('Damage', w.dmgStat/100) + bar('Accuracy', w.accStat/100) + bar('Rate of fire', (w.rofMin+w.rofMax)/2/25) + bar('Clip size', Math.min(1,w.mag/60)) + bar('Draw speed', 1 - w.draw/950);
+}
+async function openTempPicker(){
+  const box = $('tempPicker'); if(box.style.display==='block'){ box.style.display='none'; return; }
+  box.style.display='block'; box.innerHTML = '<div class="note" style="padding:8px">Loading…</div>';
+  const list = (await loadTornTemps()) || TEMP_CHOICES.map(n=>({id:null, name:n}));
+  box.innerHTML = list.map(t=>{ const ti = tempInfo(t); return `<div class="slot" data-name="${esc(t.name)}" data-id="${t.id??''}">${itemImg(t.id)}<div style="min-width:0"><div class="sn">${esc(t.name)}</div><div class="ss">${ti?ti.desc:''}</div></div></div>`; }).join('');
+  box.querySelectorAll('.slot').forEach(el=> el.onclick = ()=>{ store.tempPick = {name: el.dataset.name, id: el.dataset.id ? Number(el.dataset.id) : null}; save(); box.style.display='none'; renderSlots(); });
 }
 function drawLobbyFigure(){
   const cv = $('figCv'); if(!cv.clientWidth) return;
@@ -956,6 +983,16 @@ $('quit').onclick = ()=> endMatch(true);
 $('reloadBtn').onpointerdown = e=>{ e.stopPropagation(); e.preventDefault(); if(D) D.me.reloadHold = true; };
 ['pointerup','pointercancel','pointerleave'].forEach(ev=> $('reloadBtn').addEventListener(ev, ()=>{ if(D) D.me.reloadHold = false; }));
 $('readyBtn').onpointerdown = e=>{ e.stopPropagation(); e.preventDefault(); calibrate(); };
+$('recentreBtn').onpointerdown = e=>{ e.stopPropagation(); e.preventDefault(); recentre(); };
+// Re-centre: whatever way the phone points now becomes straight ahead (and, if raised, your aim height)
+function recentre(){
+  if(!D || D.mode!=='motion') return;
+  D.headRef = sensor.headU;
+  const p = pitchNow();
+  if(p!=null && p > 45) { store.settings.grip = clamp(p, 45, 110); save(); }
+  if(D.me){ D.me.yawRef = null; D.me.gamma0 = sensor.gamma; D.me.yaw = 0; D.me.aimX0 = 0; }
+  setMsg('RE-CENTRED', 'Aim reset to where you\'re pointing', 700); sfxClick();
+}
 
 async function startMatch(){
   audio();
@@ -967,7 +1004,7 @@ async function startMatch(){
   const opp = ghostOpp || selectedOpp;
   const start = currentGun();
   const guns = usableGuns().map(g=>{ const w = weaponStats(g); const G = {gun:g, w, ammo:w.mag, clips:SPARE_CLIPS, spare:0, img: loadImg(g.id ? ITEM_IMG(g.id) : null)}; G.byRound = loadsByRound(G); return G; });
-  const tInfo = tempInfo(loadout.temporary);
+  const tInfo = tempInfo(currentTemp());
   D = {
     mode, opp, guns, cur: Math.max(0, guns.findIndex(x=>x.gun===start)), armour: armourStats(loadout.armour),
     oppW: Object.assign({}, ARCH[opp.weapon]), myMax: (store.player && store.player.life) || 1000,
@@ -999,7 +1036,7 @@ function curGun(){ return D.guns[D.cur]; }
 function renderDSlots(){
   const box = $('dslots');
   let html = D.guns.map((g,i)=>`<div class="dslot ${i===D.cur?'sel':''} ${g.ammo+g.clips+g.spare===0?'empty':''}" data-i="${i}">${g.gun.id?`<img src="${ITEM_IMG(g.gun.id)}" alt="" onerror="this.style.visibility='hidden'">`:'<div style="height:38px;line-height:38px;color:#aaa">🔫</div>'}<span>${ammoText(g)}</span></div>`).join('');
-  if(D.temp){ const T = D.temp; html += `<div class="dslot temp ${T.used?'empty':''}" data-t="1">${T.info.id?`<img src="${ITEM_IMG(T.info.id)}" alt="" onerror="this.style.visibility='hidden'">`:''}<span style="color:#ddd">${T.used?0:1}</span></div>`; }
+  if(D.temp){ const T = D.temp; html += `<div class="dslot temp ${T.used?'empty':''}" data-t="1">${T.info.id?`<img src="${ITEM_IMG(T.info.id)}" alt="" onerror="this.style.visibility='hidden'">`:''}<span style="color:#ddd">${T.used?'USED':'TAP TO THROW'}</span></div>`; }
   box.innerHTML = html;
   box.querySelectorAll('.dslot').forEach(el=> el.onpointerdown = e=>{ e.stopPropagation(); e.preventDefault(); if(el.dataset.t) useTemp(); else switchGun(Number(el.dataset.i)); });
 }
@@ -1020,6 +1057,7 @@ function newRound(){
   D.round++;
   D.phase = (D.mode==='motion' && !D.calibrated) ? 'ready' : 'holster'; D.phaseT = performance.now(); D.holsterSince = null;
   $('readyBtn').style.display = D.phase==='ready' ? 'block' : 'none';
+  $('recentreBtn').style.display = D.mode==='motion' ? 'block' : 'none';
   D.me = { hp:100, lastShot:0, drawnAt:null, readyAt:null, aimX:0, aimY:0, sx:0, sy:0, recoil:0, shots:0, hits:0, hurt:0, reloadUntil:0, yawRef:null,
            burst:null, nextTurn:0, buff:{}, burnUntil:0, pepperUntil:0, flashUntil:0 };
   D.guns.forEach(g=>{ g.ammo = g.w.mag; g.clips = g.byRound ? 0 : SPARE_CLIPS; g.spare = g.byRound ? g.w.mag*SPARE_CLIPS : 0; });
@@ -1267,7 +1305,7 @@ function damageOpp(total, best, now, quiet){
   const op = D.op, me = D.me;
   if(op.dead) return;
   op.hp -= total; op.flinchUntil = now + 220;
-  { const g = oppGeom(); (D.dmgNums = D.dmgNums||[]).push({x: g.x + (Math.random()-0.5)*g.h*0.25, y: g.feet - g.h*0.9 + (op.crouch||0)*175*g.u, txt: fmt(total/100*D.opp.life), t0: now, crit: best==='head'}); } op.nextShot = Math.max(op.nextShot, now + 220 + D.oppW.rof*0.4);
+  { const g = oppGeom(); (D.dmgNums = D.dmgNums||[]).push({x: g.x + (Math.random()-0.5)*g.h*0.25, y: g.feet - g.h*0.9 + (op.crouch||0)*crouchDepth()*g.u, txt: fmt(total/100*D.opp.life), t0: now, crit: best==='head'}); } op.nextShot = Math.max(op.nextShot, now + 220 + D.oppW.rof*0.4);
   if(op.state==='drawing' || op.state==='waiting') op.readyAt += 120;
   op.pauseUntil = now + 160;
   if(!quiet) sfxHit();
@@ -1325,7 +1363,7 @@ function npcUseTemp(now){
 
 function sway(now){
   const w = curGun().w, me = D.me, t = now/1000;
-  let A = w.sway * (W/400) * (4 + me.hurt*12 + (D.mode==='touch'?2:0));
+  let A = w.sway * (W/400) * (5 + me.hurt*12 + (D.mode==='touch'?2.5:0));
   if(me.buff.dexterity) A *= 0.55;
   if(now < me.pepperUntil) A *= 3.2;
   if(now < me.flashUntil) A *= 1.8;
@@ -1367,10 +1405,11 @@ function aiBullet(now){
 }
 
 /* ---------- geometry ---------- */
-function oppGeom(){ const h = H*0.2, feet = H*0.615; return { x: W/2 + D.op.x, feet, h, u: h/300 }; }
+function oppGeom(){ const h = H*0.135, feet = H*0.585; return { x: W/2 + D.op.x, feet, h, u: h/300 }; }
 function camera(){ if(D.mode==='motion' && D.me.drawnAt!=null) return { x: D.me.aimX, y: D.me.aimY - D.me.recoil }; return {x:0,y:0}; }
 function toWorld(px,py){ const c = camera(); return { x: px + c.x, y: py + c.y }; }
-const COVER = { bin:{w:78, h:118}, dumpster:{w:230, h:150}, car:{w:250, h:140} };
+const COVER = { bin:{w:130, h:155}, dumpster:{w:240, h:160}, car:{w:260, h:150} };
+function crouchDepth(){ const C = COVER[D.opp.cover]; return C ? 330 - C.h : 0; }   // enough to drop the head fully out of sight
 function coverRect(){
   const t = D.opp.cover; if(!t || D.op.coverX==null) return null;
   const g = oppGeom(), C = COVER[t];
@@ -1382,7 +1421,8 @@ function hitTest(sx, sy){
   const p = toWorld(sx, sy), g = oppGeom();
   const cr = coverRect();
   if(cr && p.x > cr.x && p.x < cr.x+cr.w && p.y > cr.y && p.y < cr.y+cr.h) return 'cover';
-  const lx = (p.x - g.x)/g.u, ly = (p.y - g.feet)/g.u - (D.op.crouch||0)*175;
+  if(p.y > g.feet + g.u*2) return null;                                   // nothing hittable below the street
+  const lx = (p.x - g.x)/g.u, ly = (p.y - g.feet)/g.u - (D.op.crouch||0)*crouchDepth();
   return figureZone(lx, ly, D.op.state==='aiming', D.opp.look.build);
 }
 
@@ -1534,15 +1574,18 @@ function drawOpponent(c, now){
   const g = oppGeom(), op = D.op, o = D.opp;
   // shadow
   c.fillStyle='rgba(0,0,0,.4)'; c.beginPath(); c.ellipse(g.x, g.feet, g.h*0.17, g.h*0.03, 0, 0, 7); c.fill();
-  c.save(); c.translate(g.x, g.feet + (op.crouch||0)*175*g.u);
+  // clip at the street line so a crouching opponent never shows below the ground
+  c.save(); c.beginPath(); c.rect(g.x - g.h, g.feet - g.h*1.6, g.h*2, g.h*1.6 + g.u*3); c.clip();
+  c.save(); c.translate(g.x, g.feet + (op.crouch||0)*crouchDepth()*g.u);
   if(op.dead){ const k = Math.min(1,(now-op.deadT)/700); c.rotate(-k*0.3); c.scale(1+k*0.12, 1-k*0.72); c.globalAlpha = 1 - k*0.3; }
   else { c.rotate(now < op.flinchUntil ? -0.06 : op.v*0.6); }
   let aim = 0;
   if(op.state==='drawing') aim = clamp((now - op.stateT)/D.oppW.draw, 0, 1)*0.9;
   else if(op.state==='aiming') aim = 1;
   const idle = (D.phase==='holster'||D.phase==='steady') ? Math.sin(now/600)*0.15 : 0;
-  drawFigureLit(c, o.look, { aim, apose: op.state==='idle' || op.state==='waiting', walk: op.walk + idle, gunLen: D.oppW.len, twoHand: ['rifle','shotgun','mg','smg','heavy'].includes(o.weapon), flash: now - op.lastFire < 70 }, 0, 0, g.u, {key:'opp', tint:'rgba(40,30,70,.12)'});
-  c.restore();
+  if(op.hiding) aim = 0;
+  drawFigureLit(c, o.look, { aim, apose: (op.state==='idle' || op.state==='waiting') && !op.hiding, walk: op.walk + idle, gunLen: D.oppW.len, twoHand: ['rifle','shotgun','mg','smg','heavy'].includes(o.weapon), flash: now - op.lastFire < 70 }, 0, 0, g.u, {key:'opp', tint:'rgba(40,30,70,.12)'});
+  c.restore(); c.restore();
   if(D.phase==='steady' || D.phase==='holster'){
     c.font=`bold ${Math.max(12,H*0.018)|0}px Arial`; c.textAlign='center'; c.textBaseline='alphabetic';
     const ty = g.feet - g.h*1.08;
@@ -1555,10 +1598,11 @@ function drawCover(c){
   const g = oppGeom(), u = g.u;
   c.fillStyle='rgba(0,0,0,.35)'; c.beginPath(); c.ellipse(r.x + r.w/2, g.feet, r.w*0.55, g.h*0.03, 0, 0, 7); c.fill();
   if(r.type==='bin'){
-    const gr = c.createLinearGradient(r.x,0,r.x+r.w,0); gr.addColorStop(0,'#5d636b'); gr.addColorStop(0.4,'#9aa1a8'); gr.addColorStop(1,'#43474d');
+    const gr = c.createLinearGradient(r.x,0,r.x+r.w,0); gr.addColorStop(0,'#2b3a2c'); gr.addColorStop(0.4,'#3f5a40'); gr.addColorStop(1,'#1f2b20');
     c.fillStyle = gr; c.beginPath(); c.moveTo(r.x+r.w*0.06, r.y+6*u); c.lineTo(r.x+r.w*0.94, r.y+6*u); c.lineTo(r.x+r.w*0.88, g.feet); c.lineTo(r.x+r.w*0.12, g.feet); c.closePath(); c.fill();
     c.strokeStyle='rgba(0,0,0,.35)'; c.lineWidth=Math.max(1,2*u); for(let i=1;i<4;i++){ const y = r.y + r.h*i/4; c.beginPath(); c.moveTo(r.x+r.w*0.1,y); c.lineTo(r.x+r.w*0.9,y); c.stroke(); }
-    c.fillStyle='#6d737a'; c.beginPath(); c.ellipse(r.x+r.w/2, r.y+6*u, r.w*0.5, 7*u, 0, 0, 7); c.fill();
+    c.fillStyle='#2f4430'; c.fillRect(r.x, r.y, r.w, 12*u);
+    c.fillStyle='#111'; for(const fx of [0.18,0.82]){ c.beginPath(); c.arc(r.x+r.w*fx, g.feet-3*u, 9*u, 0, 7); c.fill(); }
   } else if(r.type==='dumpster'){
     const gr = c.createLinearGradient(r.x,0,r.x+r.w,0); gr.addColorStop(0,'#1f4a2c'); gr.addColorStop(0.45,'#2f6b40'); gr.addColorStop(1,'#163620');
     c.fillStyle = gr; c.fillRect(r.x, r.y+14*u, r.w, r.h-14*u);
@@ -1581,7 +1625,7 @@ function drawCover(c){
 function drawOppOverlay(c, now){
   const g = oppGeom(), op = D.op;
   if(!op.dead && D.phase==='draw'){
-    const bw = g.h*0.42, bx = g.x - bw/2, by = g.feet - g.h*1.1 + (op.crouch||0)*175*g.u;
+    const bw = g.h*0.5, bx = g.x - bw/2, by = Math.min(g.feet - g.h*1.12 + (op.crouch||0)*crouchDepth()*g.u, (coverRect()||{y:1e9}).y - 10);
     c.fillStyle='rgba(0,0,0,.6)'; c.fillRect(bx-1, by-1, bw+2, 7);
     c.fillStyle = op.hp > 50 ? '#85b200' : op.hp > 25 ? '#d9a62b' : '#e0402a'; c.fillRect(bx, by, bw*clamp(op.hp/100,0,1), 5);
   }
@@ -1669,13 +1713,25 @@ function drawReloadView(c, now){
     }
     c.fillStyle='#2a2c30'; c.beginPath(); c.arc(cx,cy,R*0.12,0,7); c.fill();
   } else {
-    const mw = R*0.6, mh = R*1.6, x = cx - mw/2, y = cy - mh/2;
-    c.fillStyle='#2c2e33'; c.fillRect(x, y, mw, mh); c.strokeStyle='#111'; c.lineWidth=3; c.strokeRect(x, y, mw, mh);
-    const k = me.reloading && me.reloadUntil ? clamp((now - me.reloadStart)/(me.reloadUntil - me.reloadStart),0,1) : (G.ammo/w.mag);
-    c.fillStyle='#d9b54a'; const rows = 10;
-    for(let i=0;i<rows;i++){ if(i/rows < k) c.fillRect(x+mw*0.15, y+mh - (i+1)*mh/rows + 2, mw*0.7, mh/rows - 4); }
+    // side view of your gun: old magazine drops out, a fresh one slides up into the magwell
+    const gw = Math.min(W*0.82, H*0.5), gh = gw*0.5, gx = cx - gw/2, gy = cy - gh*0.75;
+    const k = me.reloading && me.reloadUntil ? clamp((now - me.reloadStart)/(me.reloadUntil - me.reloadStart),0,1) : (G.ammo>0 ? 1 : 0);
+    const mx = gx + gw*0.43, mw = gw*0.085, mh = gh*0.62, seat = gy + gh*0.5;   // magwell position on Torn's item art
+    // fresh magazine travel
+    const inK = clamp((k - 0.3)/0.6, 0, 1), ease = 1 - Math.pow(1 - inK, 3);
+    const newY = seat + (H - seat) * (1 - ease);
+    const drawMag = (y, alpha, full)=>{ c.globalAlpha = alpha; c.fillStyle='#24262b'; c.beginPath(); c.moveTo(mx, y); c.lineTo(mx+mw, y); c.lineTo(mx+mw*1.25, y+mh); c.lineTo(mx+mw*0.25, y+mh); c.closePath(); c.fill();
+      c.strokeStyle='#0d0d0f'; c.lineWidth=2; c.stroke(); if(full){ c.fillStyle='#d9b54a'; c.fillRect(mx+mw*0.15, y-4, mw*0.7, 6); } c.globalAlpha = 1; };
+    // old mag falling
+    if(me.reloading && k < 0.35){ const f = k/0.35; drawMag(seat + f*f*H*0.4, 1 - f, false); }
+    if(me.reloading || G.ammo>0) drawMag(newY, 1, true);
+    if(G.img && G.img.complete && G.img.naturalWidth) c.drawImage(G.img, gx, gy, gw, gh);
+    else { c.fillStyle='#1d1d1d'; c.fillRect(gx+gw*0.1, gy+gh*0.3, gw*0.8, gh*0.22); c.fillRect(gx+gw*0.4, gy+gh*0.5, gw*0.12, gh*0.35); }
+    // hand pushing the mag home
+    if(me.reloading && k > 0.3){ const skin = myLook.gloves ? myLook.gloves.color : myLook.skin; c.fillStyle = skin; c.beginPath(); c.ellipse(mx + mw*0.7, newY + mh + gh*0.12, gw*0.07, gh*0.16, 0, 0, 7); c.fill(); }
+    if(k >= 0.9 && me.reloading){ c.fillStyle='rgba(255,230,140,.6)'; c.beginPath(); c.arc(mx+mw/2, seat, gw*0.04, 0, 7); c.fill(); }
     c.fillStyle='#fff'; c.font=`bold ${Math.max(13,H*0.02)|0}px Arial`; c.textAlign='center';
-    c.fillText(me.reloading ? 'SWAPPING CLIP…' : (canReload(G) ? '' : 'NO CLIPS LEFT'), cx, y - 14);
+    c.fillText(me.reloading ? 'RELOADING…' : (canReload(G) ? '' : 'NO CLIPS LEFT'), cx, gy - 16);
   }
   c.fillStyle='#fff'; c.font=`bold ${Math.max(14,H*0.022)|0}px Arial`; c.textAlign='center'; c.textBaseline='middle';
   c.fillText(`${ammoText(G)}`, cx, cy + R + 22);

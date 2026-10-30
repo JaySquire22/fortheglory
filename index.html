@@ -358,8 +358,15 @@ function statMods(st){
   return {str:m(st.str), def:m(st.def), spd:m(st.spd), dex:m(st.dex), share:{str:st.str/t, def:st.def/t, spd:st.spd/t, dex:st.dex/t}};
 }
 function ratioText(st){ const m = statMods(st).share; if(!m) return 'Even stats'; return `STR ${Math.round(m.str*100)}% · DEF ${Math.round(m.def*100)}% · SPD ${Math.round(m.spd*100)}% · DEX ${Math.round(m.dex*100)}%`; }
+function normClothing(raw){
+  let list = raw && raw.clothing; if(!list) return [];
+  if(!Array.isArray(list)) list = Object.values(list);
+  return list.map(it=>({id: it.id ?? it.ID, name: it.name || '', type: it.type || '', slot: it.slot ?? null})).filter(i=>i.name);
+}
 async function fetchEquip(key){
-  try { return normEquip(await tornGet(`/v2/user/equipment`, key)); }
+  try { const j = await tornGet(`/v2/user/equipment`, key); store.clothing = normClothing(j); store.clothingChecked = true;
+        const eq = normEquip(j); const extra = eq.filter(i=>/clothing/i.test(i.type)); if(extra.length){ store.clothing = store.clothing.concat(extra); }
+        return eq.filter(i=>!/clothing/i.test(i.type)); }
   catch(e){ if(e.code===2) throw e; return normEquip(await tornGet(`/user?selections=equipment`, key)); }
 }
 
@@ -452,13 +459,41 @@ function itemColor(n){
   if(/bulletproof|kevlar/.test(n)) return {base:'#202124'};
   return setColor(n);
 }
-function lookFromArmour(armour){
-  const L = {skin:'#dcc6b8', build:1.08, hair:{style:'short',color:'#3a2e26'}, top:{color:'#e9e9e9'}, pants:{color:'#4a4d55'}, boots:{color:'#2a2a2a'}};
+const COLOUR_WORDS = [['black','#1d1d20'],['white','#e8e8e8'],['red','#a51f22'],['crimson','#8a1020'],['navy','#1f2a44'],['blue','#2a4f9a'],['green','#2f6b3a'],['olive','#55603a'],['pink','#d06a9a'],['purple','#5a2f7a'],['yellow','#d8b63a'],['gold','#c9a24a'],['orange','#d6782a'],['grey','#6a6d72'],['gray','#6a6d72'],['silver','#a0a4aa'],['brown','#5a3a24'],['tan','#b4946a'],['khaki','#a8956a'],['beige','#cdb894'],['denim','#3b4f6e']];
+function colourOf(n, dflt){ for(const [w,c] of COLOUR_WORDS) if(n.includes(w)) return c; return dflt; }
+// Torn clothing items → how the avatar is dressed (armour is drawn on top)
+function applyClothing(L, clothing){
+  for(const it of clothing||[]){
+    const n = (it.name||'').toLowerCase();
+    if(/sunglass|shades|aviator/.test(n)) { L.shades = true; continue; }
+    if(/glasses|spectacle|monocle/.test(n)) { L.glasses = true; continue; }
+    if(/beanie|wool hat/.test(n)) { L.helmet = L.helmet || {style:'beanie', color: colourOf(n,'#2a2a2e')}; continue; }
+    if(/fedora|trilby|top hat|cowboy hat|bowler/.test(n)) { L.helmet = L.helmet || {style:'fedora', color: colourOf(n,'#2a2422')}; continue; }
+    if(/bandana|headband/.test(n)) { L.helmet = L.helmet || {style:'bandana', color: colourOf(n,'#a51f22')}; continue; }
+    if(/\bcap\b|baseball|snapback/.test(n)) { L.helmet = L.helmet || {style:'cap', color: colourOf(n,'#22324a')}; continue; }
+    if(/mask|balaclava/.test(n)) { L.mask = L.mask || {type:'eyes', color: colourOf(n,'#111')}; continue; }
+    if(/trench|long coat|overcoat|duster/.test(n)) { L.coat = {color: colourOf(n,'#3a3026')}; continue; }
+    if(/jacket|blazer|bomber|leather/.test(n)) { L.outer = {color: colourOf(n, /leather/.test(n)?'#2a1e18':'#2e3440')}; continue; }
+    if(/hoodie|hooded/.test(n)) { L.top = {type:'hoodie', color: colourOf(n,'#4a4d55')}; continue; }
+    if(/sweater|jumper|long sleeve|cardigan/.test(n)) { L.top = {type:'long', color: colourOf(n,'#5a3a3a')}; continue; }
+    if(/shirt|blouse|polo/.test(n) && !/t-shirt|tshirt|tee/.test(n)) { L.top = {type:'shirt', color: colourOf(n,'#d8d8d8'), pattern:/stripe/.test(n)?'stripes':null}; continue; }
+    if(/t-shirt|tshirt|\btee\b|top|vest top|singlet|tank/.test(n)) { L.top = {type: /tank|singlet|vest top/.test(n)?'tank':'tee', color: colourOf(n,'#e8e8e8'), pattern:/stripe/.test(n)?'stripes':null}; continue; }
+    if(/shorts|swim trunks|boxers/.test(n)) { L.pants = {type:'shorts', color: colourOf(n,'#3b4f6e')}; continue; }
+    if(/jeans|denim/.test(n)) { L.pants = {type:'jeans', color: colourOf(n.replace('denim',''),'#3b4f6e')}; continue; }
+    if(/trousers|pants|slacks|joggers|sweatpants|cargo|chinos|skirt/.test(n)) { L.pants = {type:'pants', color: colourOf(n,'#3a3d44'), camo:/camo/.test(n)?'#55603a':null}; continue; }
+    if(/sneakers|trainers|runners/.test(n)) { L.boots = {type:'sneakers', color: colourOf(n,'#e0e0e0')}; continue; }
+    if(/boots/.test(n)) { L.boots = {type:'boots', color: colourOf(n,'#3a2a20')}; continue; }
+    if(/shoes|loafers|heels|sandals|flip/.test(n)) { L.boots = {type:'shoes', color: colourOf(n,'#1d1d20')}; continue; }
+  }
+  return L;
+}
+function lookFromArmour(armour, clothing){
+  const L = applyClothing({skin:'#dcc6b8', build:1.08, hair:{style:'short',color:'#3a2e26'}, top:{color:'#e9e9e9'}, pants:{color:'#4a4d55'}, boots:{color:'#2a2a2a'}}, clothing);
   for(const a of armour||[]){
     const n = a.name.toLowerCase(), col = itemColor(n);
     if(/helmet|hat|mask|visor|cap|hood/.test(n)) L.helmet = {color:col.base, visor:col.visor, style:/motorcycle/.test(n)?'moto':/riot|sentinel|eod|full/.test(n)?'full':/cap|hat/.test(n)?'cap':'combat'};
     else if(/glove/.test(n)) L.gloves = {color:col.base};
-    else if(/boot|shoe/.test(n)) L.boots = {color:col.base};
+    else if(/boot|shoe/.test(n)) L.boots = {type:'boots', color:col.base};
     else if(/pant|trouser|leg|kilt|skirt|short/.test(n)) L.pants = {color:col.base, camo:col.camo};
     else L.vest = {color:col.base, camo:col.camo, type:/jacket|coat/.test(n)?'jacket':/suit/.test(n)?'suit':'vest'};
   }
@@ -483,7 +518,7 @@ function camoFill(c, base, camo, seed){
   c.fillStyle = shade(base,-0.45);
   for(let i=0;i<40;i++){ c.beginPath(); c.ellipse(-60+rnd()*120, -320+rnd()*480, 3+rnd()*6, 2+rnd()*4, rnd()*3, 0, 7); c.fill(); }
 }
-function limb(c, x1,y1,x2,y2,w1,w2,color){
+function limb(c, x1,y1,x2,y2,w1,w2,color,pattern){
   const a = Math.atan2(y2-y1, x2-x1), nx = -Math.sin(a), ny = Math.cos(a);
   if(/^#/.test(color)){
     const g = c.createLinearGradient(x1+nx*w1/2, y1+ny*w1/2, x1-nx*w1/2, y1-ny*w1/2);
@@ -495,6 +530,7 @@ function limb(c, x1,y1,x2,y2,w1,w2,color){
   c.arc(x2, y2, w2/2, a+Math.PI/2, a-Math.PI/2, true);
   c.lineTo(x1-nx*w1/2, y1-ny*w1/2); c.arc(x1, y1, w1/2, a-Math.PI/2, a+Math.PI/2, true);
   c.fill();
+  if(pattern){ c.save(); c.clip(); pattern(c); c.restore(); }
 }
 function headPath(c){
   c.beginPath(); c.moveTo(0,-299);
@@ -561,31 +597,66 @@ function drawFigure(c, L, P){
   P = P || {};
   const B = L.build || 1, skin = L.skin || '#cdbcae', skinD = shade(skin,-0.2);
   const pants = (L.pants && L.pants.color) || '#4a4d55';
-  const sw = Math.sin(P.walk||0);
-  // legs
+  // ---- gait: sidestep with knee bend, body bob and lean ----
+  const ph = P.walk||0, mv = clamp(P.move||0, 0, 2);
+  const bob = mv > 0.05 ? Math.abs(Math.sin(ph))*3.5*Math.min(1,mv) : 0;
+  const PL = L.pants || {}, shorts = PL.type==='shorts', shoe = L.boots || {color:'#2a2a2a'};
+  const hipY = -150 + bob;
   for(const side of [-1,1]){
-    c.save(); c.translate(side*14*B, -152); c.rotate(side*0.03 + sw*side*0.10);
-    c.save(); c.beginPath(); c.moveTo(-15*B,0); c.lineTo(15*B,0); c.lineTo(10,80); c.lineTo(8,140); c.lineTo(-8,140); c.lineTo(-11,80); c.closePath();
-    c.fillStyle = pants; c.fill(); c.clip(); camoFill(c, pants, L.pants&&L.pants.camo, side>0?11:23);
-    if(L.pants && L.pants.stripes){ c.strokeStyle='rgba(20,20,20,.45)'; c.lineWidth=1.4; for(let x=-16;x<18;x+=5){ c.beginPath(); c.moveTo(x,0); c.lineTo(x*0.6,150); c.stroke(); } }
-    c.fillStyle='rgba(0,0,0,.18)'; c.fillRect(side>0?2:-16, 0, 14, 150); c.restore();
-    const bt = (L.boots && L.boots.color) || '#2a2a2a';
-    c.fillStyle = bt; c.beginPath(); c.moveTo(-10,128); c.lineTo(10,128); c.lineTo(12+side*3,150); c.lineTo(-12+side*3,150); c.closePath(); c.fill();
-    c.fillStyle='rgba(255,255,255,.12)'; c.fillRect(-10,129,20,3);
-    c.strokeStyle='rgba(0,0,0,.45)'; c.lineWidth=1.2; for(let ly=132; ly<146; ly+=4){ c.beginPath(); c.moveTo(-4,ly); c.lineTo(4,ly+2); c.moveTo(4,ly); c.lineTo(-4,ly+2); c.stroke(); }
-    c.fillStyle='rgba(0,0,0,.35)'; c.fillRect(-13+side*3,147,26,3);
+    const cyc = Math.sin(ph + (side>0 ? 0 : Math.PI));
+    const lift = mv>0.05 ? Math.max(0, cyc) * Math.min(1.2, mv) : 0;          // this leg is stepping
+    const th = side*(0.035 + (mv>0.05 ? 0.07*Math.min(1.3,mv)*(0.5+0.5*cyc) : 0)) + (P.lean||0)*0.4;
+    const hx = side*14*B, T = 76, S = 74*(1 - 0.38*lift);
+    const kx = hx + Math.sin(th)*T, ky = hipY + Math.cos(th)*T;
+    const ax = kx + Math.sin(th - side*0.04)*S, ay = ky + Math.cos(th)*S;
+    const pantsCol = PL.color || '#4a4d55';
+    const pat = (cc)=>{ camoFill(cc, pantsCol, PL.camo, side>0?11:23); if(PL.stripes){ cc.strokeStyle='rgba(20,20,20,.45)'; cc.lineWidth=1.4; for(let x=-40;x<40;x+=5){ cc.beginPath(); cc.moveTo(x,-200); cc.lineTo(x,10); cc.stroke(); } } if(PL.type==='jeans'){ cc.strokeStyle='rgba(255,220,150,.35)'; cc.lineWidth=1; cc.beginPath(); cc.moveTo(hx+side*6,-160); cc.lineTo(ax+side*3,ay); cc.stroke(); } };
+    limb(c, hx, hipY, kx, ky, 27*B, 19*B, pantsCol, pat);
+    limb(c, kx, ky, ax, ay, shorts ? 16*B : 19*B, shorts ? 12*B : 15*B, shorts ? skin : pantsCol, shorts ? null : pat);
+    if(shorts){ c.fillStyle = pantsCol; c.beginPath(); c.ellipse(kx, ky-8, 12*B, 9, 0, 0, 7); c.fill(); }
+    // knee crease
+    c.fillStyle='rgba(0,0,0,.12)'; c.beginPath(); c.ellipse(kx, ky, 7*B, 3, 0, 0, 7); c.fill();
+    // shoe / boot
+    const sc = shoe.color || '#2a2a2a', boot = shoe.type!=='sneakers' && shoe.type!=='shoes';
+    c.save(); c.translate(ax, ay);
+    if(boot){ c.fillStyle = sc; c.beginPath(); c.moveTo(-9,-16); c.lineTo(9,-16); c.lineTo(11,-4); c.quadraticCurveTo(13+side*2,4,8+side*3,5); c.lineTo(-8+side*3,5); c.quadraticCurveTo(-13+side*2,4,-11,-4); c.closePath(); c.fill();
+      c.strokeStyle='rgba(0,0,0,.45)'; c.lineWidth=1.1; for(let ly=-13; ly<-3; ly+=3.5){ c.beginPath(); c.moveTo(-4,ly); c.lineTo(4,ly+1.5); c.moveTo(4,ly); c.lineTo(-4,ly+1.5); c.stroke(); } }
+    else { c.fillStyle = sc; c.beginPath(); c.moveTo(-8,-6); c.lineTo(8,-6); c.quadraticCurveTo(13+side*2,2,9+side*3,4); c.lineTo(-9+side*3,4); c.quadraticCurveTo(-13+side*2,2,-8,-6); c.fill(); }
+    c.fillStyle = shoe.type==='sneakers' ? '#f2f2f2' : 'rgba(0,0,0,.45)'; c.fillRect(-11+side*3, 3, 22, 3);
     c.restore();
   }
+  // upper body leans into the movement and bobs with each step
+  c.save(); c.translate(0, hipY + 150); c.translate(0,-150); c.rotate(P.lean||0); c.translate(0,150);
   // hips
-  c.save(); c.fillStyle = pants; c.beginPath(); c.moveTo(-31*B,-166); c.lineTo(31*B,-166); c.lineTo(29*B,-140); c.lineTo(-29*B,-140); c.closePath(); c.fill(); c.clip(); camoFill(c, pants, L.pants&&L.pants.camo, 31); c.restore();
-  c.fillStyle = '#1a1a1a'; c.fillRect(-31*B,-168,62*B,7);
+  { const pc = PL.color || '#4a4d55'; c.save(); c.fillStyle = pc; c.beginPath(); c.moveTo(-31*B,-166); c.lineTo(31*B,-166); c.lineTo(30*B,-142); c.quadraticCurveTo(0,-132,-30*B,-142); c.closePath(); c.fill(); c.clip(); camoFill(c, pc, PL.camo, 31); c.restore();
+    c.fillStyle = L.belt || '#1a1a1a'; c.fillRect(-31*B,-168,62*B,7); c.fillStyle='#b8a050'; c.fillRect(-4,-168,8,7); }
   // torso (skin)
   c.fillStyle = skin; c.beginPath(); c.moveTo(-40*B,-246); c.lineTo(40*B,-246); c.quadraticCurveTo(36*B,-200,29*B,-164); c.lineTo(-29*B,-164); c.quadraticCurveTo(-36*B,-200,-40*B,-246); c.fill();
   { const tg = c.createLinearGradient(-40,0,40,0); tg.addColorStop(0,'rgba(0,0,0,.22)'); tg.addColorStop(.45,'rgba(255,255,255,.06)'); tg.addColorStop(1,'rgba(0,0,0,.28)');
     c.fillStyle = tg; c.beginPath(); c.moveTo(-40*B,-246); c.lineTo(40*B,-246); c.quadraticCurveTo(36*B,-200,29*B,-164); c.lineTo(-29*B,-164); c.quadraticCurveTo(-36*B,-200,-40*B,-246); c.fill();
     c.strokeStyle='rgba(0,0,0,.15)'; c.lineWidth=1.5; c.beginPath(); c.moveTo(-26,-214); c.quadraticCurveTo(-12,-206,0,-214); c.quadraticCurveTo(12,-206,26,-214); c.moveTo(0,-232); c.lineTo(0,-168); c.stroke(); }
+  // clothing top (under any armour)
+  if(L.top && L.top.type && L.top.type!=='tank'){
+    const tc = L.top.color;
+    c.save(); c.fillStyle = tc; c.beginPath(); c.moveTo(-41*B,-247); c.lineTo(-10,-248); c.quadraticCurveTo(0,-240,10,-248); c.lineTo(41*B,-247); c.quadraticCurveTo(36*B,-200,31*B,-156); c.lineTo(-31*B,-156); c.quadraticCurveTo(-36*B,-200,-41*B,-247); c.fill(); c.clip();
+    if(L.top.pattern==='stripes'){ c.fillStyle = shade(tc,-0.35); for(let y=-246;y<-156;y+=10) c.fillRect(-45,y,90,4); }
+    if(L.top.logo){ c.fillStyle = L.top.logo; c.beginPath(); c.arc(-14,-222,6,0,7); c.fill(); }
+    c.fillStyle='rgba(0,0,0,.18)'; c.beginPath(); c.moveTo(-31,-170); c.quadraticCurveTo(0,-162,31,-170); c.lineTo(31,-156); c.lineTo(-31,-156); c.fill();
+    c.restore();
+    if(L.top.type==='hoodie'){ c.fillStyle = shade(tc,-0.15); c.beginPath(); c.ellipse(0,-247,18,6,0,0,Math.PI); c.fill(); c.fillStyle = shade(tc,-0.25); c.fillRect(-18,-188,36,16);
+      c.strokeStyle='#ddd'; c.lineWidth=1.2; c.beginPath(); c.moveTo(-5,-244); c.lineTo(-6,-226); c.moveTo(5,-244); c.lineTo(6,-226); c.stroke(); }
+    if(L.top.type==='shirt'){ c.strokeStyle='rgba(0,0,0,.3)'; c.lineWidth=1.2; c.beginPath(); c.moveTo(0,-240); c.lineTo(0,-158); c.stroke(); for(let y=-236;y<-160;y+=14){ c.fillStyle='#ddd'; c.beginPath(); c.arc(2,y,1.4,0,7); c.fill(); } }
+  }
+  // short jacket worn as clothing
+  if(L.outer){
+    const oc = L.outer.color;
+    c.save(); c.fillStyle = oc; c.beginPath(); c.moveTo(-43*B,-248); c.lineTo(-9,-249); c.lineTo(-4,-200); c.lineTo(-5,-152); c.lineTo(-33*B,-152); c.quadraticCurveTo(-38*B,-200,-43*B,-248); c.fill();
+    c.beginPath(); c.moveTo(43*B,-248); c.lineTo(9,-249); c.lineTo(4,-200); c.lineTo(5,-152); c.lineTo(33*B,-152); c.quadraticCurveTo(38*B,-200,43*B,-248); c.fill();
+    c.fillStyle = shade(oc,-0.25); c.beginPath(); c.moveTo(-9,-249); c.lineTo(-20,-236); c.lineTo(-12,-214); c.closePath(); c.moveTo(9,-249); c.lineTo(20,-236); c.lineTo(12,-214); c.closePath(); c.fill();
+    c.restore();
+  }
   // tank top
-  if(L.top && !L.vest){
+  if(L.top && (!L.top.type || L.top.type==='tank') && !L.vest){
     c.save();
     c.beginPath(); c.moveTo(-24*B,-244); c.lineTo(-14*B,-244); c.quadraticCurveTo(0,-226,14*B,-244); c.lineTo(24*B,-244); c.quadraticCurveTo(33*B,-200,30*B,-162); c.lineTo(-30*B,-162); c.quadraticCurveTo(-33*B,-200,-24*B,-244);
     if(L.top.pattern==='mesh'){
@@ -627,18 +698,22 @@ function drawFigure(c, L, P){
   }
   // arms
   const k = clamp(P.aim||0,0,1);
-  const sleeve = L.coat ? L.coat.color : (V && V.type!=='vest' ? V.color : (L.sleeves || null));
+  const longTop = L.top && (L.top.type==='long' || L.top.type==='hoodie' || L.top.type==='shirt');
+  const sleeve = L.coat ? L.coat.color : L.outer ? L.outer.color : (V && V.type!=='vest' ? V.color : (L.sleeves || (longTop ? L.top.color : null)));
+  const shortSleeve = !sleeve && L.top && L.top.type==='tee' ? L.top.color : null;
   const glove = L.gloves ? L.gloves.color : skin;
   for(const side of [-1,1]){
     const gunSide = side===1, sx = side*41*B, sy = -238;
     // Torn-style A-pose when relaxed
     let hx = side*(P.apose ? 76 : 52)*B, hy = P.apose ? -148 : -128;
+    if(!P.apose && k < 0.5 && mv > 0.05){ const sw2 = Math.sin(ph + (side>0 ? Math.PI : 0)); hx += side*sw2*4*mv; hy += -Math.abs(sw2)*5*mv; }
     if(gunSide){ hx = hx + (10 - hx)*k; hy = hy + (-206 - hy)*k; }
     else if(P.twoHand && k>0.4){ const t=(k-0.4)/0.6; hx = hx + (-4 - hx)*t; hy = hy + (-198 - hy)*t; }
     const ex = (sx+hx)/2 + side*5*(1-k*0.6), ey = (sy+hy)/2 + 3;
     // deltoid
     if(!sleeve){ c.fillStyle = skin; c.beginPath(); c.ellipse(sx - side*2, sy+4, 13*B, 15, side*0.4, 0, 7); c.fill(); }
     limb(c, sx,sy+2, ex,ey, 21*B, 16*B, sleeve || skin);
+    if(shortSleeve){ const mxp = sx + (ex-sx)*0.55, myp = sy + (ey-sy)*0.55; limb(c, sx,sy+2, mxp,myp, 23*B, 19*B, shortSleeve); }
     limb(c, ex,ey, hx,hy, 17*B, 12*B, sleeve || skin);
     // gun in hand
     if(gunSide && P.gunLen && k>0.02){
@@ -717,6 +792,14 @@ function drawFigure(c, L, P){
     } else if(H.style==='flatcap'){
       c.beginPath(); c.moveTo(-19,-286); c.quadraticCurveTo(-18,-303,2,-302); c.quadraticCurveTo(22,-300,22,-288); c.lineTo(24,-284); c.quadraticCurveTo(0,-280,-19,-286); c.fill();
       c.fillStyle = shade(H.color,-0.25); c.beginPath(); c.ellipse(4,-285,20,3.5,0,0,7); c.fill();
+    } else if(H.style==='beanie'){
+      c.beginPath(); c.ellipse(0,-286,18.5,16,0,Math.PI,0); c.lineTo(18.5,-281); c.lineTo(-18.5,-281); c.fill();
+      c.fillStyle = shade(H.color,-0.2); c.fillRect(-19,-286,38,6);
+    } else if(H.style==='fedora'){
+      c.beginPath(); c.ellipse(0,-288,27,5,0,0,7); c.fill(); c.beginPath(); c.moveTo(-15,-288); c.quadraticCurveTo(-15,-310,0,-308); c.quadraticCurveTo(15,-310,15,-288); c.fill();
+      c.fillStyle = shade(H.color,-0.4); c.fillRect(-15,-293,30,4);
+    } else if(H.style==='bandana'){
+      c.beginPath(); c.ellipse(0,-287,17.5,13,0,Math.PI,0); c.fill(); c.beginPath(); c.moveTo(16,-286); c.lineTo(24,-280); c.lineTo(20,-276); c.closePath(); c.fill();
     } else if(H.style==='cap'){
       c.beginPath(); c.ellipse(0,-288,18,12,0,Math.PI,0); c.fill(); c.beginPath(); c.ellipse(0,-288,21,4,0,0,7); c.fill();
     } else {
@@ -724,6 +807,7 @@ function drawFigure(c, L, P){
       c.fillStyle = shade(H.color,-0.3); c.fillRect(-21,-285,42,4);
     }
   }
+  c.restore();
 }
 // hitboxes in figure units
 function figureZone(lx, ly, aiming, B){
@@ -786,7 +870,7 @@ function currentGun(){ const g = usableGuns(); return g.find(x=>String(x.id)===S
 function enterLobby(){
   const p = store.player;
   loadout = buildLoadout(store.equip);
-  myLook = lookFromArmour(loadout.armour);
+  myLook = lookFromArmour(loadout.armour, store.clothing);
   $('pName').textContent = p.name || 'Guest';
   $('pMeta').textContent = p.id ? `[${p.id}]${p.level?` · Level ${p.level}`:''}${p.faction?` · ${p.faction}`:''}` : 'Guest fighter';
   const st = store.stats;
@@ -814,9 +898,10 @@ function renderSlots(){
   const ts = $('tempSlot'); if(ts && !loadout.temporary) ts.onclick = openTempPicker;
   $('slots').querySelectorAll('.slot:not(.off):not(.tempslot)').forEach(el=> el.onclick = ()=>{ store.gun = el.dataset.id; save(); renderSlots(); });
   const ar = armourStats(loadout.armour);
-  $('armr').innerHTML = loadout.armour.length
+  const clo = (store.clothing||[]).map(c=>esc(c.name)).join(', ');
+  $('armr').innerHTML = (store.key ? `Clothing: ${clo || (store.clothingChecked ? 'none returned by Torn' : 'refresh loadout to read it')}<br>` : '') + (loadout.armour.length
     ? `Armour: ${loadout.armour.map(a=>esc(a.name)).join(', ')} — soaks <b>${Math.round(ar.reduce*100)}%</b> damage${ar.helmet?', helmet halves headshots':''}`
-    : 'No armour equipped.';
+    : 'No armour equipped.');
   const w = weaponStats(cur);
   const bar = (lbl,v)=>`<span>${lbl}</span><div class="bar"><i style="width:${Math.round(clamp(v,0.05,1)*100)}%"></i></div>`;
   $('gunBars').innerHTML = bar('Damage', w.dmgStat/100) + bar('Accuracy', w.accStat/100) + bar('Rate of fire', (w.rofMin+w.rofMax)/2/25) + bar('Clip size', Math.min(1,w.mag/60)) + bar('Draw speed', 1 - w.draw/950);
@@ -1113,8 +1198,11 @@ function newRound(){
   D.holes = []; D.particles = []; D.roundOver=false; D.result=null;
   setMsg(D.round===1 ? D.opp.name : `Round ${D.round}`, D.phase==='ready' ? 'Hold your phone comfortably, then tap READY' : (D.mode==='motion' ? 'Holster: hold your phone flat' : 'Hold your finger on the screen'), 99999);
   // cover position for this round
-  D.op.coverX = D.opp.cover ? (Math.random()*2-1) * W*0.14 : null;
-  D.op.x = D.op.coverX ?? 0; D.op.crouch = 0; D.op.hideUntil = 0; D.op.exposeUntil = 0;
+  D.props = placeProps();
+  D.op.coverIdx = null; D.op.mode = 'idle'; D.op.crouch = 0;
+  // start somewhere in the open, or next to your favourite cover
+  if(D.opp.cover){ const i = D.props.findIndex(p=>p.type===D.opp.cover); D.op.coverIdx = i>=0 ? i : 0; const pr = D.props[D.op.coverIdx]; D.op.x = pr.x + (Math.random()<0.5?-1:1)*(COVER[pr.type].w/2*oppGeom().u + W*0.06); }
+  else D.op.x = (Math.random()*2-1)*W*0.15;
   D.dmgNums = [];
 }
 function setMsg(a,b,dur){ D.msg=a; D.msgSub=b||''; D.msgT=performance.now()+(dur||1500); }
@@ -1191,7 +1279,7 @@ function update(now, dt){
     if(!op.dead){
       if(op.state==='waiting' && now >= op.stateT) op.state='drawing';
       if(op.state==='drawing' && now >= op.readyAt) op.state='aiming';
-      const exposed = !D.opp.cover || op.crouch < 0.3;
+      const exposed = op.crouch < 0.3 && (op.mode==='hold' || Math.abs(op.v) < aiSpeeds().walk*0.35);
       if(op.state==='aiming' && exposed && now >= op.nextShot && now >= op.flinchUntil) aiShoot(now);
       if(op.burstLeft>0 && now >= op.burstNext && exposed){ aiBullet(now); op.burstLeft--; op.burstNext = now + 90; }
       coverAI(now, dt);
@@ -1228,52 +1316,65 @@ function updateAim(now, dt){
   me.aimX += (tx - me.aimX) * k; me.aimY += (ty - me.aimY) * k;
 }
 
-function coverAI(now, dt){
-  const op = D.op; if(!D.opp.cover) return;
-  const tier = D.opp.stars || 1;
-  if(op.state==='aiming' || op.state==='drawing'){
-    if(op.hiding){ if(now > op.hideUntil){ op.hiding = false; op.exposeUntil = now + (3200 - tier*250) * (0.7+Math.random()*0.6); op.nextShot = Math.min(op.nextShot, now + 350); } }
-    else if(now > op.exposeUntil && op.exposeUntil){ op.hiding = true; op.hideUntil = now + (900 + Math.random()*1300); op.burstLeft = 0; }
-    else if(!op.exposeUntil) op.exposeUntil = now + 2500;
+// ---------- opponent movement: walk/run between spots, plant to shoot, use any cover ----------
+function aiSpeeds(){ const base = D.opp.speed * 1.35 * W / 1000 * D.opMods.spd; return {walk: base, run: base*1.9}; }
+function aiPick(now){
+  const op = D.op, tier = D.opp.stars || 1, props = D.props || [];
+  const range = (D.mode==='motion' ? 0.62 : 0.4) * W, gu = oppGeom().u;
+  const usesCover = !!D.opp.cover && props.length;
+  // after peeking out to shoot, duck back behind the same cover most of the time
+  if(usesCover && op.coverIdx!=null && op.lastMode==='hold' && Math.random() < 0.7){
+    op.tx = props[op.coverIdx].x; op.running = false; op.mode = 'move'; op.next = 'hide'; op.lastMode = 'move'; return;
   }
-  const target = op.hiding ? 1 : 0;
-  op.crouch += (target - op.crouch) * Math.min(1, dt/140);
+  if(usesCover && (op.coverIdx==null || Math.random() < 0.3)){
+    // relocate (run) to a cover spot, preferring one that isn't the current
+    let i = Math.floor(Math.random()*props.length); if(props.length>1 && i===op.coverIdx) i = (i+1)%props.length;
+    op.coverIdx = i; op.tx = props[i].x; op.running = Math.abs(op.tx - op.x) > W*0.15; op.mode = 'move'; op.next = 'hide';
+    return;
+  }
+  if(usesCover && op.coverIdx!=null){
+    // peek out from the side of the current cover
+    const pr = props[op.coverIdx], half = COVER[pr.type].w/2*gu, side = Math.random()<0.5 ? -1 : 1;
+    op.tx = clamp(pr.x + side*(half + W*(0.05 + Math.random()*0.05)), -range, range); op.running = false; op.mode = 'move'; op.next = 'hold';
+    return;
+  }
+  // open ground: sidestep or dash to a new spot
+  const dist = (0.15 + Math.random()*0.55) * range * (Math.random()<0.5?-1:1);
+  op.tx = clamp(op.x + dist, -range, range); op.running = Math.abs(op.tx - op.x) > W*0.3 || Math.random() < 0.15*tier; op.mode = 'move'; op.next = 'hold';
 }
-function strafe(now, dt){
-  const op = D.op;
-  if(D.opp.cover){
-    // stay close to cover; slide behind it when hiding
-    if(op.hiding){ op.v = 0; op.x += (op.coverX - op.x) * Math.min(1, dt/150); op.walk += dt*0.004; return; }
-  }
-  if(op.state==='waiting' && D.opp.speed < 0.1) return;
-  const wide = D.mode==='motion' ? 0.62 : 0.4;          // motion players can turn to follow, so the street is wider
-  const range = D.opp.cover ? W*0.22 : W*wide, sp = D.opp.speed * 1.35 * W / 1000 * oppMod('move', now) * D.opMods.spd * (D.opp.cover ? 0.8 : 1);     // px per ms
-  if(Math.abs(op.tx - op.x) < 4 || !op.moving){
-    op.moving = true;
-    if(Math.random() < 0.3 - (D.opp.stars||1)*0.04) op.pauseUntil = now + 200 + Math.random()*450;
-    op.tx = (op.coverX||0) + (Math.random()*2-1) * range;
-    op.jukeAt = now + 500 + Math.random()*(1600 - (D.opp.stars||1)*220);
-  }
-  if(op.pauseUntil && now < op.pauseUntil){ op.v *= 0.8; return; }
-  if(op.jukeAt && now > op.jukeAt){ op.tx = (op.coverX||0) + (Math.random()*2-1) * range; op.jukeAt = now + 500 + Math.random()*(1600 - (D.opp.stars||1)*220); }
-  const dir = Math.sign(op.tx - op.x);
-  op.v += (dir*sp*(1 - 0.6*(op.kneel||0)) - op.v) * Math.min(1, dt/120);
-  op.x += op.v * dt;
-  op.walk += Math.abs(op.v) * dt * 0.06 * (1 - 0.7*(op.kneel||0));
-}
-// Dodging: drop to a crouch now and then (more often with higher dexterity and on harder NPCs)
+function coverAI(now, dt){}
 function kneelAI(now, dt){
   const op = D.op;
-  if(op.state==='aiming' || op.state==='drawing'){
-    if(op.kneeling){ if(now > op.kneelUntil){ op.kneeling = false; op.nextKneel = now + (2600 - (D.opp.stars||1)*250) / D.opMods.dex * (0.6+Math.random()*0.8); } }
-    else if(now > (op.nextKneel||0)){
-      if(!op.nextKneel) op.nextKneel = now + 1200 + Math.random()*1500;
-      else { op.kneeling = true; op.kneelUntil = now + 600 + Math.random()*1000 * D.opMods.dex; }
-    }
-  }
-  op.kneel = (op.kneel||0) + ((op.kneeling ? 1 : 0) - (op.kneel||0)) * Math.min(1, dt/110);
+  op.kneel = (op.kneel||0) + ((op.kneeling ? 1 : 0) - (op.kneel||0)) * Math.min(1, dt/130);
+  const target = op.mode==='hide' ? 1 : 0;
+  op.crouch += (target - op.crouch) * Math.min(1, dt/160);
+  op.hiding = op.mode==='hide' && op.crouch > 0.4;
 }
-
+function strafe(now, dt){
+  const op = D.op, tier = D.opp.stars || 1, sp = aiSpeeds(), mod = oppMod('move', now);
+  if(op.state==='waiting' || op.state==='idle'){ op.v *= 0.85; op.walk += Math.abs(op.v)*dt*0.05; return; }
+  if(!op.mode || op.mode==='idle') aiPick(now);
+  let want = 0;
+  if(op.mode==='move'){
+    const dx = op.tx - op.x, top = (op.running ? sp.run : sp.walk) * mod;
+    // accelerate, cruise, then ease to a stop at the spot
+    want = Math.sign(dx) * Math.min(top, Math.abs(dx) / 140);
+    if(Math.abs(dx) < 3 && Math.abs(op.v) < sp.walk*0.25){
+      op.v = 0; op.mode = op.next || 'hold';
+      if(op.mode==='hide') op.until = now + 900 + Math.random()*1400;
+      else { op.until = now + (1400 + Math.random()*1400) * (1.15 - tier*0.06); op.kneeling = Math.random() < 0.25 * D.opMods.dex * (0.6 + tier*0.15); if(op.kneeling) op.kneelUntil = now + 500 + Math.random()*900; }
+    }
+  } else if(op.mode==='hold'){
+    if(op.kneeling && now > op.kneelUntil) op.kneeling = false;
+    if(now > op.until){ op.kneeling = false; op.mode = 'idle'; op.lastMode = 'hold'; }
+  } else if(op.mode==='hide'){
+    if(now > op.until){ op.mode = 'idle'; op.lastMode = 'hide'; }
+  }
+  const acc = op.running ? 260 : 180;                       // ms to reach speed: no instant direction flips
+  op.v += (want - op.v) * Math.min(1, dt/acc);
+  op.x += op.v * dt;
+  op.walk += Math.abs(op.v) * dt * (op.running ? 0.045 : 0.06) / Math.max(0.6, W/400);
+}
 function foul(text){ D.me.reaction = null; finishRound('lose', text, performance.now(), true); }
 function finishRound(res, why, now, foulFlag){
   if(D.roundOver) return;
@@ -1469,9 +1570,27 @@ function aiBullet(now){
 function oppGeom(){ const d = clamp(store.settings.dist ?? 0.55, 0, 1); const h = H*(0.26 - 0.15*d), feet = H*(0.72 - 0.12*d); return { x: W/2 + D.op.x, feet, h, u: h/300 }; }
 function camera(){ if(D.mode==='motion' && D.me.drawnAt!=null) return { x: D.me.aimX, y: D.me.aimY - D.me.recoil }; return {x:0,y:0}; }
 function toWorld(px,py){ const c = camera(); return { x: px + c.x, y: py + c.y }; }
-const COVER = { bin:{w:130, h:155}, dumpster:{w:240, h:160}, car:{w:260, h:150} };
-function crouchDepth(){ const C = COVER[D.opp.cover]; return C ? 330 - C.h : 0; }   // enough to drop the head fully out of sight
+const COVER = { bin:{w:130, h:155}, dumpster:{w:240, h:160}, car:{w:260, h:150}, burnedcar:{w:330, h:135} };
+function curProp(){ return D.props && D.op.coverIdx!=null ? D.props[D.op.coverIdx] : null; }
+function crouchDepth(){ const pr = curProp(); const C = pr ? COVER[pr.type] : null; return C ? 330 - C.h : 175; }   // enough to drop the head fully out of sight
+function propRect(pr){ const g = oppGeom(), C = COVER[pr.type]; const cx = W/2 + pr.x; return { x: cx - C.w/2*g.u, y: g.feet - C.h*g.u, w: C.w*g.u, h: C.h*g.u + g.u*4, type: pr.type }; }
+function placeProps(){
+  const range = (D.mode==='motion' ? 0.6 : 0.38) * W;
+  const types = ['burnedcar','bin']; if(D.opp.cover && !types.includes(D.opp.cover)) types.push(D.opp.cover); else types.push(Math.random()<0.5?'dumpster':'car');
+  if(D.mode!=='motion') types.length = 2;
+  const props = [];
+  for(const t of types){
+    for(let tries=0; tries<40; tries++){
+      const x = (Math.random()*2-1) * range, gu = oppGeom().u, half = COVER[t].w/2*gu;
+      if(props.every(p=> Math.abs(p.x - x) > half + COVER[p.type].w/2*gu + W*0.12)){ props.push({type:t, x}); break; }
+    }
+  }
+  return props.sort((a,b)=>a.x-b.x);
+}
 function coverRect(){
+  const pr = curProp(); return pr ? propRect(pr) : null;
+}
+function _oldCoverRect(){
   const t = D.opp.cover; if(!t || D.op.coverX==null) return null;
   const g = oppGeom(), C = COVER[t];
   const cx = W/2 + D.op.coverX;
@@ -1480,8 +1599,7 @@ function coverRect(){
 function hitTest(sx, sy){
   if(D.op.dead) return null;
   const p = toWorld(sx, sy), g = oppGeom();
-  const cr = coverRect();
-  if(cr && p.x > cr.x && p.x < cr.x+cr.w && p.y > cr.y && p.y < cr.y+cr.h) return 'cover';
+  for(const pr of D.props||[]){ const cr = propRect(pr); if(p.x > cr.x && p.x < cr.x+cr.w && p.y > cr.y && p.y < cr.y+cr.h) return 'cover'; }
   if(p.y > g.feet + g.u*2) return null;                                   // nothing hittable below the street
   const lx = (p.x - g.x)/g.u, ly = ((p.y - g.feet)/g.u - (D.op.crouch||0)*crouchDepth()) / (1 - 0.38*(D.op.kneel||0));
   return figureZone(lx, ly, D.op.state==='aiming', D.opp.look.build);
@@ -1491,6 +1609,75 @@ function hitTest(sx, sy){
    BACKGROUND (Torn City street, rendered once per resize)
    world x: -W..2W, y: -H..1.8H
    ========================================================= */
+// The Krak Inn pub and Tentacles & Tallow candle shop
+function drawLandmark(c, kind, x, top, bw, bh, base, sc, rnd){
+  const sfH = bh*0.36, sfTop = base - sfH;
+  if(kind==='krak'){
+    // brick upper floors
+    c.fillStyle = '#4a2c22'; c.fillRect(x, top, bw, bh);
+    c.strokeStyle='rgba(0,0,0,.18)'; c.lineWidth=1; for(let y = top+6; y < sfTop; y += 7*sc){ c.beginPath(); c.moveTo(x,y); c.lineTo(x+bw,y); c.stroke(); }
+    for(let k=0;k<3;k++){ const wx = x + bw*(0.12 + k*0.3), wy = top + bh*0.14, ww = bw*0.16, wh = bh*0.26;
+      c.fillStyle='#2a1a14'; c.fillRect(wx-3, wy-3, ww+6, wh+6); c.fillStyle='rgba(255,190,100,.65)'; c.fillRect(wx, wy, ww, wh);
+      c.strokeStyle='#2a1a14'; c.lineWidth=2; c.beginPath(); c.moveTo(wx+ww/2, wy); c.lineTo(wx+ww/2, wy+wh); c.moveTo(wx, wy+wh/2); c.lineTo(wx+ww, wy+wh/2); c.stroke(); }
+    // green tiled pub frontage
+    const tg = c.createLinearGradient(0, sfTop, 0, base); tg.addColorStop(0,'#1e4a32'); tg.addColorStop(1,'#123020');
+    c.fillStyle = tg; c.fillRect(x, sfTop, bw, sfH);
+    // fascia board with gold lettering
+    const fh = sfH*0.24; c.fillStyle = '#0f2a1c'; c.fillRect(x - 4, sfTop - fh, bw + 8, fh);
+    c.strokeStyle = '#c9a24a'; c.lineWidth = 2; c.strokeRect(x + 2, sfTop - fh + 3, bw - 4, fh - 6);
+    c.save(); c.shadowColor='rgba(255,210,120,.6)'; c.shadowBlur=8; c.fillStyle = '#e8c45a'; c.font = `bold ${fh*0.62|0}px Georgia, serif`; c.textAlign='center'; c.textBaseline='middle';
+    c.fillText('THE KRAK INN', x + bw/2, sfTop - fh/2 + 1); c.restore();
+    // leaded windows glowing amber + door
+    for(const [fx, fw] of [[0.06, 0.34], [0.6, 0.34]]){ const wx = x + bw*fx, wy = sfTop + sfH*0.15, ww = bw*fw, wh = sfH*0.62;
+      c.fillStyle = 'rgba(255,175,80,.75)'; c.fillRect(wx, wy, ww, wh); c.strokeStyle='rgba(40,25,10,.8)'; c.lineWidth=1;
+      for(let gx = wx; gx < wx+ww; gx += ww/6){ c.beginPath(); c.moveTo(gx, wy); c.lineTo(gx, wy+wh); c.stroke(); }
+      for(let gy = wy; gy < wy+wh; gy += wh/4){ c.beginPath(); c.moveTo(wx, gy); c.lineTo(wx+ww, gy); c.stroke(); }
+      c.fillStyle='rgba(0,0,0,.35)'; c.fillRect(wx + ww*0.2, wy + wh*0.55, ww*0.12, wh*0.45); c.fillRect(wx + ww*0.6, wy + wh*0.5, ww*0.14, wh*0.5); }
+    c.fillStyle = '#2a1a10'; c.fillRect(x + bw*0.43, sfTop + sfH*0.1, bw*0.14, sfH*0.9);
+    c.fillStyle = 'rgba(255,190,100,.5)'; c.fillRect(x + bw*0.45, sfTop + sfH*0.14, bw*0.1, sfH*0.25);
+    // hanging pub sign with a kraken
+    const bx = x + bw*0.98, by = sfTop - fh - bh*0.12, sw = bw*0.22, shh = sw*1.2;
+    c.strokeStyle = '#151515'; c.lineWidth = 3; c.beginPath(); c.moveTo(bx - sw*0.1, by); c.lineTo(bx + sw*0.75, by); c.stroke();
+    c.beginPath(); c.moveTo(bx + sw*0.1, by); c.lineTo(bx + sw*0.1, by + 8); c.moveTo(bx + sw*0.65, by); c.lineTo(bx + sw*0.65, by + 8); c.stroke();
+    const px = bx + sw*0.0, py = by + 8;
+    c.fillStyle = '#1a2a3a'; c.fillRect(px, py, sw*0.75, shh*0.75); c.strokeStyle = '#c9a24a'; c.lineWidth = 2; c.strokeRect(px+2, py+2, sw*0.75-4, shh*0.75-4);
+    const kx = px + sw*0.375, ky = py + shh*0.3, kr = sw*0.13;
+    c.fillStyle = '#7a3a8a'; c.beginPath(); c.ellipse(kx, ky, kr, kr*1.2, 0, 0, 7); c.fill();
+    c.strokeStyle = '#7a3a8a'; c.lineWidth = Math.max(2, kr*0.35); c.lineCap='round';
+    for(let t=0;t<6;t++){ const a = Math.PI*(0.15 + t*0.14); c.beginPath(); c.moveTo(kx + Math.cos(a)*kr*0.6, ky + kr*0.6); c.quadraticCurveTo(kx + Math.cos(a)*kr*2.2, ky + kr*1.8, kx + Math.cos(a)*kr*1.6 + (t%2?4:-4), ky + kr*2.6); c.stroke(); }
+    c.lineCap='butt'; c.fillStyle='#fff'; c.beginPath(); c.arc(kx - kr*0.35, ky - kr*0.1, kr*0.18, 0, 7); c.arc(kx + kr*0.35, ky - kr*0.1, kr*0.18, 0, 7); c.fill();
+    c.fillStyle='#e8c45a'; c.font=`bold ${sw*0.11|0}px Georgia, serif`; c.textAlign='center'; c.fillText('KRAK INN', kx, py + shh*0.7);
+    // lanterns
+    for(const fx of [0.02, 0.98]){ const lx = x + bw*fx, ly = sfTop + sfH*0.05; const gl = c.createRadialGradient(lx,ly,0,lx,ly,H*0.05*sc); gl.addColorStop(0,'rgba(255,210,130,.8)'); gl.addColorStop(1,'rgba(255,200,120,0)'); c.fillStyle = gl; c.beginPath(); c.arc(lx,ly,H*0.05*sc,0,7); c.fill(); }
+  } else {
+    // Tentacles & Tallow — candle shop
+    c.fillStyle = '#3a2440'; c.fillRect(x, top, bw, bh);
+    for(let k=0;k<2;k++){ const wx = x + bw*(0.15 + k*0.45), wy = top + bh*0.15, ww = bw*0.25, wh = bh*0.24; c.fillStyle = 'rgba(255,200,140,.45)'; c.fillRect(wx, wy, ww, wh); c.strokeStyle='#241628'; c.lineWidth=3; c.strokeRect(wx, wy, ww, wh); }
+    const tg = c.createLinearGradient(0, sfTop, 0, base); tg.addColorStop(0,'#4a2a52'); tg.addColorStop(1,'#2a1630');
+    c.fillStyle = tg; c.fillRect(x, sfTop, bw, sfH);
+    // sign board
+    const fh = sfH*0.26; c.fillStyle = '#1e1022'; c.fillRect(x + bw*0.04, sfTop - fh - 4, bw*0.92, fh);
+    c.strokeStyle = '#d9c39a'; c.lineWidth = 1.5; c.strokeRect(x + bw*0.04 + 3, sfTop - fh - 1, bw*0.92 - 6, fh - 6);
+    c.save(); c.shadowColor='rgba(255,220,160,.6)'; c.shadowBlur=8; c.fillStyle = '#efdcb4'; c.font = `italic bold ${fh*0.5|0}px Georgia, serif`; c.textAlign='center'; c.textBaseline='middle';
+    c.fillText('Tentacles & Tallow', x + bw/2, sfTop - fh/2 - 3); c.restore();
+    // candle-filled window
+    const wx = x + bw*0.06, wy = sfTop + sfH*0.14, ww = bw*0.62, wh = sfH*0.7;
+    c.fillStyle = 'rgba(40,20,30,.9)'; c.fillRect(wx, wy, ww, wh);
+    const shelf = wy + wh*0.88; c.fillStyle='#5a3a28'; c.fillRect(wx, shelf, ww, 3); c.fillRect(wx, wy + wh*0.45, ww, 3);
+    for(let k=0;k<14;k++){
+      const row = k < 7 ? wy + wh*0.45 : shelf, cx = wx + ww*((k%7)+0.5)/7, ch = wh*(0.12 + rnd()*0.18), cw = ww*0.045;
+      const colr = ['#efe2c8','#c94a4a','#7a3a8a','#e8c45a','#4a7a5a'][k%5];
+      c.fillStyle = colr; c.fillRect(cx - cw/2, row - ch, cw, ch);
+      const fy = row - ch - 4; const gl = c.createRadialGradient(cx, fy, 0, cx, fy, ww*0.06); gl.addColorStop(0,'rgba(255,220,120,.9)'); gl.addColorStop(1,'rgba(255,180,80,0)');
+      c.fillStyle = gl; c.beginPath(); c.arc(cx, fy, ww*0.06, 0, 7); c.fill(); c.fillStyle='#fff3c0'; c.beginPath(); c.ellipse(cx, fy, 1.5, 3, 0, 0, 7); c.fill();
+    }
+    // a tentacle curling round the window frame
+    c.strokeStyle='#7a3a8a'; c.lineWidth = Math.max(3, ww*0.02); c.lineCap='round'; c.beginPath(); c.moveTo(wx + ww, wy + wh); c.bezierCurveTo(wx + ww + 14, wy + wh*0.5, wx + ww - 10, wy + wh*0.2, wx + ww + 6, wy - 6); c.stroke(); c.lineCap='butt';
+    c.fillStyle = '#1a0e1e'; c.fillRect(x + bw*0.74, sfTop + sfH*0.1, bw*0.18, sfH*0.9);
+    c.fillStyle='rgba(255,200,140,.35)'; c.fillRect(x + bw*0.76, sfTop + sfH*0.14, bw*0.14, sfH*0.22);
+  }
+  c.fillStyle = 'rgba(0,0,0,.45)'; c.fillRect(x + bw - 3, top, 4, bh);
+}
 function buildBackground(){
   // A wide Torn City street seen front-on: a full row of shopfronts across the whole play area,
   // with the road in front so opponents can move all the way left and right.
@@ -1517,9 +1704,14 @@ function buildBackground(){
   const signs = ['BAR','PAWN SHOP','PHARMACY','GYM','CASINO','HOTEL','24/7','LOANS','NIGHTCLUB','CITY BANK','DINER','TATTOO','HOSPITAL','JAIL','TORN TIMES','POINTS'];
   const neon = ['#ff3b6b','#3bd1ff','#ffd23b','#7cff5a','#ff8a2a','#c35bff'];
   const walls = ['#4a3a34','#3a3f48','#54443a','#33363d','#5a4438','#3d3a44'];
-  let x = X0, i = 0;
+  let x = X0, i = 0, krakDone = false, candleDone = false;
   while(x < X1){
-    const bw = W*(0.42 + rnd()*0.3)*sc, bh = H*(0.32 + rnd()*0.22)*sc, top = facadeBase - bh, col = walls[i%walls.length];
+    let bw = W*(0.42 + rnd()*0.3)*sc, bh = H*(0.32 + rnd()*0.22)*sc;
+    // landmark shops near the middle of the street
+    let special = null;
+    if(!krakDone && x + bw > W*0.05 && x < W*0.3){ special = 'krak'; krakDone = true; bw = Math.max(bw, W*0.62*sc); bh = Math.max(bh, H*0.4*sc); }
+    else if(!candleDone && krakDone && x + bw > W*0.62 && x < W*0.95){ special = 'candle'; candleDone = true; bw = Math.max(bw, W*0.55*sc); }
+    const top = facadeBase - bh, col = special==='krak' ? '#3a2a22' : special==='candle' ? '#3a2440' : walls[i%walls.length];
     const gr = c.createLinearGradient(x,0,x+bw,0); gr.addColorStop(0, shade(col,0.08)); gr.addColorStop(1, shade(col,-0.25));
     c.fillStyle = gr; c.fillRect(x, top, bw+1, bh);
     // cornice
@@ -1531,6 +1723,7 @@ function buildBackground(){
       c.fillStyle = rnd()<0.55 ? 'rgba(255,205,120,.6)' : '#15171c'; c.fillRect(wx, wy, ww, wh);
       c.fillStyle = 'rgba(0,0,0,.35)'; c.fillRect(wx, wy+wh, ww, 2);
     }
+    if(special){ drawLandmark(c, special, x, top, bw, bh, facadeBase, sc, rnd); x += bw; i++; continue; }
     // shopfront: big window + door + awning
     const sfTop = facadeBase - bh*0.3;
     c.fillStyle = 'rgba(255,190,110,.18)'; c.fillRect(x + bw*0.06, sfTop, bw*0.62, bh*0.3);
@@ -1594,7 +1787,7 @@ function render(now){
   if(pep) c.filter = 'blur(3px)';
   if(BG) c.drawImage(BG.cv, -W, -H, W*3, H*2.8);
   drawOpponent(c, now);
-  drawCover(c);
+  drawCover(c, now);
   drawEffects(c, now);
   drawOppOverlay(c, now);
   for(const h of D.holes){ c.fillStyle='rgba(10,10,10,.7)'; c.beginPath(); c.arc(h.x, h.y, 1.8, 0, 7); c.fill(); }
@@ -1624,13 +1817,15 @@ function drawOpponent(c, now){
   c.save(); c.translate(g.x, g.feet + (op.crouch||0)*crouchDepth()*g.u);
   c.scale(1, 1 - 0.38*(op.kneel||0));
   if(op.dead){ const k = Math.min(1,(now-op.deadT)/700); c.rotate(-k*0.3); c.scale(1+k*0.12, 1-k*0.72); c.globalAlpha = 1 - k*0.3; }
-  else { c.rotate(now < op.flinchUntil ? -0.06 : op.v*0.6); }
+  else if(now < op.flinchUntil) c.rotate(-0.06);
   let aim = 0;
   if(op.state==='drawing') aim = clamp((now - op.stateT)/D.oppW.draw, 0, 1)*0.9;
   else if(op.state==='aiming') aim = 1;
   const idle = (D.phase==='holster'||D.phase==='steady') ? Math.sin(now/600)*0.15 : 0;
   if(op.hiding) aim = 0;
-  drawFigureLit(c, o.look, { aim, apose: (op.state==='idle' || op.state==='waiting') && !op.hiding, walk: op.walk + idle, gunLen: D.oppW.len, twoHand: ['rifle','shotgun','mg','smg','heavy'].includes(o.weapon), flash: now - op.lastFire < 70 }, 0, 0, g.u, {key:'opp', tint:'rgba(40,30,70,.12)'});
+  const spd = aiSpeeds(), mvAmt = Math.abs(op.v) / spd.walk, lean = clamp(op.v / spd.run, -1, 1) * 0.14;
+  if(op.mode==='move' && op.running && aim > 0.5) aim = 0.4;   // gun lowered while running
+  drawFigureLit(c, o.look, { aim, move: mvAmt, lean, apose: (op.state==='idle' || op.state==='waiting') && !op.hiding, walk: op.walk + idle, gunLen: D.oppW.len, twoHand: ['rifle','shotgun','mg','smg','heavy'].includes(o.weapon), flash: now - op.lastFire < 70 }, 0, 0, g.u, {key:'opp', tint:'rgba(40,30,70,.12)'});
   c.restore(); c.restore();
   if(D.phase==='steady' || D.phase==='holster'){
     c.font=`bold ${Math.max(12,H*0.018)|0}px Arial`; c.textAlign='center'; c.textBaseline='alphabetic';
@@ -1639,8 +1834,10 @@ function drawOpponent(c, now){
   }
 }
 
-function drawCover(c){
-  const r = coverRect(); if(!r) return;
+function drawCover(c, now){
+  for(const pr of D.props||[]) drawProp(c, propRect(pr), now);
+}
+function drawProp(c, r, now){
   const g = oppGeom(), u = g.u;
   c.fillStyle='rgba(0,0,0,.35)'; c.beginPath(); c.ellipse(r.x + r.w/2, g.feet, r.w*0.55, g.h*0.03, 0, 0, 7); c.fill();
   if(r.type==='bin'){
@@ -1665,13 +1862,36 @@ function drawCover(c){
     c.fillStyle='#222'; c.fillRect(x+w*0.3, y+h*0.6, w*0.4, h*0.14);
     c.fillStyle='#ffe9a8'; c.beginPath(); c.ellipse(x+w*0.13, y+h*0.62, w*0.06, h*0.06, 0, 0, 7); c.ellipse(x+w*0.87, y+h*0.62, w*0.06, h*0.06, 0, 0, 7); c.fill();
     c.fillStyle='#bbb'; c.fillRect(x+w*0.02, g.feet-h*0.18, w*0.96, h*0.06);
+  } else if(r.type==='burnedcar'){
+    // burned-out car, side on: scorched shell sitting on its rims, windows gone
+    const x = r.x, y = r.y, w = r.w, h = r.h, gy = g.feet;
+    const body = c.createLinearGradient(0, y, 0, gy); body.addColorStop(0,'#2a2522'); body.addColorStop(0.5,'#4a3426'); body.addColorStop(1,'#1a1614');
+    c.fillStyle = body; c.beginPath();
+    c.moveTo(x, gy - h*0.18); c.lineTo(x + w*0.02, y + h*0.45); c.lineTo(x + w*0.22, y + h*0.38); c.lineTo(x + w*0.32, y + h*0.02); c.lineTo(x + w*0.7, y);
+    c.lineTo(x + w*0.82, y + h*0.36); c.lineTo(x + w*0.98, y + h*0.42); c.lineTo(x + w, gy - h*0.18); c.closePath(); c.fill();
+    // rust & soot patches
+    // charring: soot from the windows down, a few rust streaks
+    const soot = c.createLinearGradient(0, y, 0, gy); soot.addColorStop(0,'rgba(0,0,0,.55)'); soot.addColorStop(0.6,'rgba(0,0,0,.15)'); soot.addColorStop(1,'rgba(0,0,0,.4)');
+    c.fillStyle = soot; c.fillRect(x, y, w, gy - y);
+    for(const [fx, fy, fw] of [[0.12,0.55,0.07],[0.46,0.62,0.04],[0.86,0.58,0.05]]){ c.fillStyle='rgba(120,55,25,.35)'; c.fillRect(x + w*fx, y + h*fy, w*fw, h*0.22); }
+    c.strokeStyle='rgba(0,0,0,.55)'; c.lineWidth=1.5; c.beginPath(); c.moveTo(x + w*0.5, y + h*0.4); c.lineTo(x + w*0.5, gy - h*0.12); c.stroke();
+    // empty window frames
+    c.fillStyle = '#0c0b0a'; c.beginPath(); c.moveTo(x + w*0.35, y + h*0.08); c.lineTo(x + w*0.5, y + h*0.06); c.lineTo(x + w*0.5, y + h*0.36); c.lineTo(x + w*0.27, y + h*0.38); c.closePath(); c.fill();
+    c.beginPath(); c.moveTo(x + w*0.53, y + h*0.06); c.lineTo(x + w*0.68, y + h*0.06); c.lineTo(x + w*0.79, y + h*0.36); c.lineTo(x + w*0.53, y + h*0.36); c.closePath(); c.fill();
+    c.strokeStyle='rgba(200,220,230,.35)'; c.lineWidth=1; c.beginPath(); c.moveTo(x+w*0.36,y+h*0.3); c.lineTo(x+w*0.4,y+h*0.2); c.lineTo(x+w*0.38,y+h*0.12); c.stroke();
+    // bare rims (tyres burned away)
+    for(const fx of [0.2, 0.8]){ c.fillStyle='#3a3836'; c.beginPath(); c.arc(x + w*fx, gy - h*0.08, h*0.16, 0, 7); c.fill(); c.strokeStyle='#5a5652'; c.lineWidth=2; c.stroke(); c.fillStyle='#1a1918'; c.beginPath(); c.arc(x + w*fx, gy - h*0.08, h*0.06, 0, 7); c.fill(); }
+    c.fillStyle='rgba(0,0,0,.5)'; c.fillRect(x + w*0.02, gy - h*0.05, w*0.96, h*0.05);
+    // smoke still rising
+    for(let i=0;i<5;i++){ const t = ((now||0)/2200 + i/5) % 1, sx = x + w*(0.45 + Math.sin(i*2.1)*0.12) + Math.sin(t*6+i)*w*0.03, sy = y + h*0.1 - t*h*1.6, rr = h*(0.12 + t*0.35);
+      c.fillStyle = `rgba(60,60,64,${0.35*(1-t)})`; c.beginPath(); c.arc(sx, sy, rr, 0, 7); c.fill(); }
   }
 }
 // floating health bar over the opponent + damage numbers (Torn-scaled)
 function drawOppOverlay(c, now){
   const g = oppGeom(), op = D.op;
   if(!op.dead && D.phase==='draw'){
-    const bw = g.h*0.5, bx = g.x - bw/2, by = Math.min(g.feet - g.h*1.12*(1 - 0.38*(op.kneel||0)) + (op.crouch||0)*crouchDepth()*g.u, (coverRect()||{y:1e9}).y - 10);
+    const bw = g.h*0.5, bx = g.x - bw/2, by = Math.min(g.feet - g.h*1.12*(1 - 0.38*(op.kneel||0)) + (op.crouch||0)*crouchDepth()*g.u, op.crouch > 0.5 && coverRect() ? coverRect().y - 10 : 1e9);
     c.fillStyle='rgba(0,0,0,.6)'; c.fillRect(bx-1, by-1, bw+2, 7);
     c.fillStyle = op.hp > 50 ? '#85b200' : op.hp > 25 ? '#d9a62b' : '#e0402a'; c.fillRect(bx, by, bw*clamp(op.hp/100,0,1), 5);
   }

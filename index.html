@@ -59,6 +59,7 @@ button:disabled{opacity:.5}
 .opp{display:flex;align-items:center;gap:10px;padding:8px;border-bottom:1px solid #222;cursor:pointer}
 .opp:last-child{border-bottom:0}
 .opp canvas{width:44px;height:60px;flex:0 0 44px;background:#222;border-radius:3px}
+.opp img.card{width:48px;height:66px;object-fit:cover;border-radius:3px;flex:0 0 48px;border:1px solid #111}
 .opp img.pf{width:44px;height:44px;border-radius:3px;object-fit:cover;flex:0 0 44px}
 .opp .nm{font-weight:bold;color:#fff}
 .opp .tg{font-size:12px;color:var(--muted)}
@@ -213,18 +214,18 @@ const ARCH = {
 const ZONE_MULT = {head:3.0, torso:1.0, arm:0.6, leg:0.6};
 const SPARE_CLIPS = 2;
 
-// Original Torn City street opponents (not Torn's own NPCs)
+// Torn's NPCs (used with permission). card = portrait image in /npc
 const NPCS = [
-  {id:'punk',  name:'Spike',            title:'Street punk',      weapon:'pistol', react:950, acc:0.30, life:1250, speed:0.07, stars:1,
-   look:{skin:'#cdb8a8', hair:{style:'mohawk',color:'#c23a6a'}, top:{color:'#e6e6e6'}, pants:{color:'#3b4f6e'}, boots:{color:'#e2e2e2'}}},
-  {id:'bounc', name:'Big Marv',         title:'Club bouncer',     weapon:'shotgun',react:780, acc:0.40, life:3400, speed:0.08, stars:2,
-   look:{skin:'#a77d62', build:1.18, hair:{style:'bald'}, vest:{color:'#1d1d1f',type:'jacket'}, pants:{color:'#232325'}, boots:{color:'#151515'}, shades:true}},
-  {id:'razor', name:'Razor Rita',       title:'Gang enforcer',    weapon:'smg',    react:640, acc:0.48, life:2600, speed:0.15, stars:3,
-   look:{skin:'#d7bfae', hair:{style:'long',color:'#2a1a14'}, vest:{color:'#8d1f22',type:'jacket'}, pants:{color:'#1f1f22'}, boots:{color:'#111'}, gloves:{color:'#111'}}},
-  {id:'suit',  name:'The Accountant',   title:'Mob hitman',       weapon:'rifle',  react:540, acc:0.57, life:4100, speed:0.12, stars:4,
-   look:{skin:'#c9b2a0', hair:{style:'short',color:'#555'}, vest:{color:'#232a3a',type:'suit'}, pants:{color:'#232a3a'}, boots:{color:'#0d0d0d'}, shades:true}},
-  {id:'riot',  name:'Sgt. Kross',       title:'Riot squad veteran',weapon:'mg',    react:440, acc:0.62, life:7500, speed:0.11, stars:5,
-   look:{skin:'#cbb6a6', helmet:{style:'full',color:'#1d1f22',visor:'#2f4255'}, vest:{color:'#1f2124',type:'vest'}, pants:{color:'#25272b',camo:'#2f3237'}, boots:{color:'#111'}, gloves:{color:'#1a1a1a'}}},
+  {id:'jimmy',    name:'Jimmy',    title:'Jimmy Two-Shins',     card:'npc/jimmy.jpg',    weapon:'pistol', react:950, acc:0.30, life:2000000, speed:0.07, stars:1,
+   look:{skin:'#dcbba5', hair:{style:'short',color:'#9a5530'}, beard:'#8a4a2a', top:{color:'#6a1a1a'}, vest:{color:'#2a2c30',type:'vest'}, coat:{color:'#2a2a2d'}, pants:{color:'#c3c8d2'}, boots:{color:'#4a2e1e'}}},
+  {id:'fernando', name:'Fernando', title:'Fingers Fernando',    card:'npc/fernando.jpg', weapon:'shotgun',react:780, acc:0.40, life:2500000, speed:0.09, stars:2,
+   look:{skin:'#c9a184', hair:{style:'long',color:'#2a2622'}, beard:'#2a2622', mask:{type:'eyes',color:'#111'}, sleeves:'#5a3a28', poncho:{color:'#9a9a9a',color2:'#4e4e4e'}, pants:{color:'#2a2a2c'}, boots:{color:'#111'}}},
+  {id:'leslie',   name:'Leslie',   title:'Leslie Chanthavong',  card:'npc/leslie.jpg',   weapon:'smg',    react:640, acc:0.48, life:4000000, speed:0.15, stars:3,
+   look:{skin:'#e6d3c8', hair:{style:'short',color:'#ececec'}, glasses:true, mask:{type:'face',color:'#3a6fd0'}, top:{color:'#111',pattern:'mesh'}, pants:{color:'#e2e2e2'}, boots:{color:'#111'}}},
+  {id:'tiny',     name:'Tiny',     title:'Tiny Tears',          card:'npc/tiny.jpg',     weapon:'rifle',  react:540, acc:0.57, life:4500000, speed:0.12, stars:4,
+   look:{skin:'#dcb7a8', build:1.12, hair:{style:'bald'}, top:{color:'#efefef'}, sleeves:'#efefef', vest:{color:'#5d5a4a',camo:'#7a7560',type:'vest'}, pants:{color:'#262628'}, boots:{color:'#111'}}},
+  {id:'duke',     name:'Duke',     title:'Duke Calabrese',      card:'npc/duke.jpg',     weapon:'mg',     react:440, acc:0.62, life:5500000, speed:0.11, stars:5,
+   look:{skin:'#d7b4a2', hair:{style:'bald'}, helmet:{style:'flatcap',color:'#a8a49a'}, top:{color:'#4a3424'}, coat:{color:'#b8864e'}, pants:{color:'#5a5a5a',stripes:true}, boots:{color:'#3a2a20'}}},
 ];
 
 /* =========================================================
@@ -407,6 +408,7 @@ function drawFigure(c, L, P){
     c.save(); c.translate(side*14*B, -152); c.rotate(side*0.03 + sw*side*0.10);
     c.save(); c.beginPath(); c.moveTo(-15*B,0); c.lineTo(15*B,0); c.lineTo(10,80); c.lineTo(8,140); c.lineTo(-8,140); c.lineTo(-11,80); c.closePath();
     c.fillStyle = pants; c.fill(); c.clip(); camoFill(c, pants, L.pants&&L.pants.camo, side>0?11:23);
+    if(L.pants && L.pants.stripes){ c.strokeStyle='rgba(20,20,20,.45)'; c.lineWidth=1.4; for(let x=-16;x<18;x+=5){ c.beginPath(); c.moveTo(x,0); c.lineTo(x*0.6,150); c.stroke(); } }
     c.fillStyle='rgba(0,0,0,.18)'; c.fillRect(side>0?2:-16, 0, 14, 150); c.restore();
     const bt = (L.boots && L.boots.color) || '#2a2a2a';
     c.fillStyle = bt; c.beginPath(); c.moveTo(-10,128); c.lineTo(10,128); c.lineTo(12+side*3,150); c.lineTo(-12+side*3,150); c.closePath(); c.fill();
@@ -420,7 +422,14 @@ function drawFigure(c, L, P){
   c.fillStyle = skin; c.beginPath(); c.moveTo(-40*B,-246); c.lineTo(40*B,-246); c.quadraticCurveTo(36*B,-200,29*B,-164); c.lineTo(-29*B,-164); c.quadraticCurveTo(-36*B,-200,-40*B,-246); c.fill();
   // tank top
   if(L.top && !(L.vest && L.vest.type!=='vest')){
-    c.fillStyle = L.top.color; c.beginPath(); c.moveTo(-24*B,-244); c.lineTo(-14*B,-244); c.quadraticCurveTo(0,-226,14*B,-244); c.lineTo(24*B,-244); c.quadraticCurveTo(33*B,-200,30*B,-162); c.lineTo(-30*B,-162); c.quadraticCurveTo(-33*B,-200,-24*B,-244); c.fill();
+    c.save();
+    c.beginPath(); c.moveTo(-24*B,-244); c.lineTo(-14*B,-244); c.quadraticCurveTo(0,-226,14*B,-244); c.lineTo(24*B,-244); c.quadraticCurveTo(33*B,-200,30*B,-162); c.lineTo(-30*B,-162); c.quadraticCurveTo(-33*B,-200,-24*B,-244);
+    if(L.top.pattern==='mesh'){
+      c.clip(); c.strokeStyle = L.top.color; c.lineWidth = 1.6;
+      for(let i=-80;i<80;i+=7){ c.beginPath(); c.moveTo(i,-250); c.lineTo(i+90,-160); c.moveTo(i,-250); c.lineTo(i-90,-160); c.stroke(); }
+      c.fillStyle = L.top.color; c.fillRect(-30*B,-246,60*B,4);
+    } else { c.fillStyle = L.top.color; c.fill(); }
+    c.restore();
   }
   // vest / jacket / suit
   const V = L.vest;
@@ -443,9 +452,18 @@ function drawFigure(c, L, P){
     }
     c.restore();
   }
+  // long coat (open front, down to the knees)
+  if(L.coat){
+    const cc = L.coat.color;
+    for(const side of [-1,1]){
+      c.fillStyle = cc; c.beginPath();
+      c.moveTo(side*44*B,-248); c.lineTo(side*13,-250); c.lineTo(side*15,-200); c.lineTo(side*20,-160); c.lineTo(side*24,-66); c.lineTo(side*46*B,-70); c.quadraticCurveTo(side*42*B,-160,side*44*B,-248); c.fill();
+      c.fillStyle='rgba(0,0,0,.25)'; c.beginPath(); c.moveTo(side*13,-250); c.lineTo(side*22,-235); c.lineTo(side*16,-205); c.closePath(); c.fill();
+    }
+  }
   // arms
   const k = clamp(P.aim||0,0,1);
-  const sleeve = V && V.type!=='vest' ? V.color : null;
+  const sleeve = L.coat ? L.coat.color : (V && V.type!=='vest' ? V.color : (L.sleeves || null));
   const glove = L.gloves ? L.gloves.color : skin;
   for(const side of [-1,1]){
     const gunSide = side===1, sx = side*40*B, sy = -238;
@@ -469,6 +487,15 @@ function drawFigure(c, L, P){
     }
     c.fillStyle = glove; c.beginPath(); c.arc(hx,hy,7.5*B,0,7); c.fill();
   }
+  // poncho over shoulders and arms
+  if(L.poncho){
+    c.save(); c.beginPath(); c.moveTo(-14,-254); c.lineTo(14,-254); c.lineTo(66*B,-150); c.lineTo(0,-118); c.lineTo(-66*B,-150); c.closePath();
+    c.fillStyle = L.poncho.color; c.fill(); c.clip();
+    c.strokeStyle = L.poncho.color2; c.lineWidth = 3;
+    for(let i=-90;i<=90;i+=11){ c.beginPath(); c.moveTo(i,-260); c.lineTo(i+70,-110); c.moveTo(i,-260); c.lineTo(i-70,-110); c.stroke(); }
+    c.restore();
+    c.fillStyle='#5a3a28'; c.fillRect(-12,-256,24,6);
+  }
   // neck & head
   c.fillStyle = skinD; c.fillRect(-8*B,-262,16*B,18);
   c.fillStyle = skin; c.beginPath(); c.ellipse(-17,-276,3.5,6,0,0,7); c.ellipse(17,-276,3.5,6,0,0,7); c.fill();
@@ -481,6 +508,10 @@ function drawFigure(c, L, P){
     c.strokeStyle='rgba(40,25,20,.7)'; c.lineWidth=1.6; c.beginPath(); c.moveTo(-10,-284); c.lineTo(-3,-284.5); c.moveTo(3,-284.5); c.lineTo(10,-284); c.stroke();
     c.strokeStyle='rgba(0,0,0,.25)'; c.beginPath(); c.moveTo(0,-278); c.lineTo(-1.5,-270); c.lineTo(1.5,-269.5); c.stroke();
     c.strokeStyle='rgba(90,40,35,.8)'; c.lineWidth=1.8; c.beginPath(); c.moveTo(-5,-264); c.lineTo(5,-264); c.stroke();
+    if(L.beard){ c.fillStyle = L.beard; c.beginPath(); c.moveTo(-15,-274); c.quadraticCurveTo(-14,-256,0,-255); c.quadraticCurveTo(14,-256,15,-274); c.quadraticCurveTo(8,-262,0,-262); c.quadraticCurveTo(-8,-262,-15,-274); c.fill(); }
+    if(L.glasses){ c.strokeStyle='#222'; c.lineWidth=1.6; c.fillStyle='rgba(220,120,200,.35)'; c.beginPath(); c.rect(-12,-282,9,6); c.rect(3,-282,9,6); c.fill(); c.stroke(); c.beginPath(); c.moveTo(-3,-280); c.lineTo(3,-280); c.stroke(); }
+    if(L.mask && L.mask.type==='face'){ c.fillStyle = L.mask.color; c.beginPath(); c.moveTo(-15,-273); c.quadraticCurveTo(0,-276,15,-273); c.quadraticCurveTo(14,-258,0,-256); c.quadraticCurveTo(-14,-258,-15,-273); c.fill(); }
+    if(L.mask && L.mask.type==='eyes'){ c.fillStyle = L.mask.color; c.beginPath(); c.moveTo(-17,-284); c.quadraticCurveTo(0,-288,17,-284); c.lineTo(16,-275); c.quadraticCurveTo(0,-279,-16,-275); c.closePath(); c.fill(); c.fillStyle=L.skin; c.beginPath(); c.ellipse(-6.5,-279.5,2.6,1.6,0,0,7); c.ellipse(6.5,-279.5,2.6,1.6,0,0,7); c.fill(); c.fillStyle='#1d1612'; c.beginPath(); c.ellipse(-6.5,-279.5,1.4,1.2,0,0,7); c.ellipse(6.5,-279.5,1.4,1.2,0,0,7); c.fill(); }
     if(L.shades){ c.fillStyle='#0b0b0b'; c.beginPath(); c.roundRect ? c.roundRect(-13,-283,26,7,3) : c.rect(-13,-283,26,7); c.fill(); }
   }
   // hair
@@ -499,6 +530,9 @@ function drawFigure(c, L, P){
       c.beginPath(); c.ellipse(0,-279,21,25,0,0,7); c.fill();
       c.fillStyle = H.visor || '#222'; c.beginPath(); c.moveTo(-16,-287); c.quadraticCurveTo(0,-292,16,-287); c.lineTo(15,-268); c.quadraticCurveTo(0,-264,-15,-268); c.closePath(); c.fill();
       c.fillStyle='rgba(255,255,255,.25)'; c.beginPath(); c.ellipse(-7,-281,4,7,0.3,0,7); c.fill();
+    } else if(H.style==='flatcap'){
+      c.beginPath(); c.moveTo(-19,-286); c.quadraticCurveTo(-18,-303,2,-302); c.quadraticCurveTo(22,-300,22,-288); c.lineTo(24,-284); c.quadraticCurveTo(0,-280,-19,-286); c.fill();
+      c.fillStyle = shade(H.color,-0.25); c.beginPath(); c.ellipse(4,-285,20,3.5,0,0,7); c.fill();
     } else if(H.style==='cap'){
       c.beginPath(); c.ellipse(0,-288,18,12,0,Math.PI,0); c.fill(); c.beginPath(); c.ellipse(0,-288,21,4,0,0,7); c.fill();
     } else {
@@ -608,6 +642,7 @@ function renderOpps(){
     const d = document.createElement('div');
     d.className = `opp ${locked?'locked':''} ${sel?'sel':''}`;
     if(isGhost && o.image){ const im = document.createElement('img'); im.className='pf'; im.src=o.image; d.appendChild(im); }
+    else if(o.card){ const im = document.createElement('img'); im.className='card'; im.src=o.card; d.appendChild(im); }
     else d.appendChild(npcThumb(o));
     const t = document.createElement('div');
     t.innerHTML = `<div class="nm">${esc(o.name)}${beaten[o.id]?' ✔':''}</div><div class="tg">${locked?'🔒 Beat the previous target':esc(o.title)+' · '+ARCH[o.weapon].label}</div>`;
@@ -772,7 +807,7 @@ async function startMatch(){
   D = {
     mode, opp, guns, cur: Math.max(0, guns.findIndex(x=>x.gun===start)), armour: armourStats(loadout.armour),
     oppW: Object.assign({}, ARCH[opp.weapon]), myMax: (store.player && store.player.life) || 1000,
-    round:0, score:[0,0], rounds:[], oppImg: loadImg(opp.image), myImg: loadImg(store.player && store.player.image),
+    round:0, score:[0,0], rounds:[], oppImg: loadImg(opp.image || opp.card), oppCard: opp.card ? loadImg(opp.card) : null, myImg: loadImg(store.player && store.player.image),
     particles:[], holes:[], shake:0, flash:0, hurtFlash:0, msg:'', msgSub:'', msgT:0, pointerDown:false
   };
   $('duel').classList.add('active');
@@ -1194,6 +1229,12 @@ function drawHUD(c, now){
   const top = 8, bw = W - 16;
   lifeBar(c, 8, top, bw, store.player&&store.player.name || 'You', D.me.hp/100, D.myMax, D.myImg, ['#6b7a45','#46532a']);
   lifeBar(c, 8, top+40, bw, D.opp.name, D.op.hp/100, D.opp.life, D.oppImg, ['#7a4545','#522c2c']);
+  // NPC portrait card before the draw
+  if((D.phase==='holster' || D.phase==='steady') && D.oppCard && D.oppCard.complete && D.oppCard.naturalWidth){
+    const cw = Math.min(W*0.24, 110), ch = cw*1.375;
+    c.save(); c.shadowColor='rgba(0,0,0,.6)'; c.shadowBlur=10; c.drawImage(D.oppCard, W - cw - 10, top + 84, cw, ch); c.restore();
+    c.strokeStyle='rgba(0,0,0,.8)'; c.lineWidth=1; c.strokeRect(W - cw - 10 + .5, top + 84 + .5, cw-1, ch-1);
+  }
   // round pips
   for(let i=0;i<3;i++){
     const x = W/2 - 18 + i*18, y = top + 92;
@@ -1244,7 +1285,12 @@ function lifeBar(c, x, y, w, name, frac, max, img, grad){
   const g = c.createLinearGradient(0,y,0,y+h); g.addColorStop(0,grad[0]); g.addColorStop(1,grad[1]);
   c.fillStyle = g; c.fillRect(x, y, w, h); c.strokeStyle='rgba(0,0,0,.7)'; c.lineWidth=1; c.strokeRect(x+.5, y+.5, w-1, h-1);
   let tx = x + 8;
-  if(img && img.complete && img.naturalWidth){ c.drawImage(img, x+4, y+4, 22, 22); tx = x + 32; }
+  if(img && img.complete && img.naturalWidth){
+    const iw = img.naturalWidth, ih = img.naturalHeight;
+    if(ih > iw*1.15) c.drawImage(img, iw*0.18, ih*0.04, iw*0.64, iw*0.64, x+4, y+4, 22, 22);   // portrait card: crop the face
+    else c.drawImage(img, x+4, y+4, 22, 22);
+    tx = x + 32;
+  }
   c.font='bold 14px Arial'; c.textAlign='left'; c.textBaseline='middle'; c.fillStyle='#fff';
   c.fillText(name, tx, y+15);
   c.textAlign='right'; c.fillText(`❤ ${fmt(Math.max(0,frac)*max)} / ${fmt(max)}`, x+w-8, y+15);

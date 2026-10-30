@@ -273,15 +273,15 @@ const EFFECTS = {
 
 // Torn's NPCs (used with permission). card = portrait image in /npc
 const NPCS = [
-  {id:'jimmy',    name:'Jimmy',    title:'Jimmy Two-Shins',     card:'npc/jimmy.jpg',    weapon:'pistol', react:850, acc:0.34, life:2000000, speed:0.10, stars:1,
+  {id:'jimmy', bstats:{str:28,def:22,spd:25,dex:25},    name:'Jimmy',    title:'Jimmy Two-Shins',     card:'npc/jimmy.jpg',    weapon:'pistol', react:850, acc:0.34, life:2000000, speed:0.10, stars:1,
    look:{skin:'#dcbba5', hair:{style:'short',color:'#9a5530'}, beard:'#8a4a2a', top:{color:'#6a1a1a'}, vest:{color:'#2a2c30',type:'vest'}, coat:{color:'#2a2a2d'}, pants:{color:'#c3c8d2'}, boots:{color:'#4a2e1e'}}},
-  {id:'fernando', name:'Fernando', title:'Fingers Fernando',    card:'npc/fernando.jpg', cover:'bin', weapon:'shotgun', temp:'molotov',react:700, acc:0.40, life:2500000, speed:0.14, stars:2,
+  {id:'fernando', bstats:{str:20,def:20,spd:22,dex:38}, name:'Fernando', title:'Fingers Fernando',    card:'npc/fernando.jpg', cover:'bin', weapon:'shotgun', temp:'molotov',react:700, acc:0.40, life:2500000, speed:0.14, stars:2,
    look:{skin:'#c9a184', hair:{style:'long',color:'#2a2622'}, beard:'#2a2622', mask:{type:'eyes',color:'#111'}, sleeves:'#5a3a28', poncho:{color:'#9a9a9a',color2:'#4e4e4e'}, pants:{color:'#2a2a2c'}, boots:{color:'#111'}}},
-  {id:'leslie',   name:'Leslie',   title:'Leslie Chanthavong',  card:'npc/leslie.jpg', cover:'car',   weapon:'smg', temp:'pepper',    react:580, acc:0.46, life:4000000, speed:0.19, stars:3,
+  {id:'leslie', bstats:{str:18,def:20,spd:40,dex:22},   name:'Leslie',   title:'Leslie Chanthavong',  card:'npc/leslie.jpg', cover:'car',   weapon:'smg', temp:'pepper',    react:580, acc:0.46, life:4000000, speed:0.19, stars:3,
    look:{skin:'#e6d3c8', hair:{style:'short',color:'#ececec'}, glasses:true, mask:{type:'face',color:'#3a6fd0'}, top:{color:'#111',pattern:'mesh'}, pants:{color:'#e2e2e2'}, boots:{color:'#111'}}},
-  {id:'tiny',     name:'Tiny',     title:'Tiny Tears',          card:'npc/tiny.jpg', cover:'dumpster',     weapon:'rifle', temp:'heg',  react:480, acc:0.52, life:4500000, speed:0.23, stars:4,
+  {id:'tiny', bstats:{str:36,def:34,spd:14,dex:16},     name:'Tiny',     title:'Tiny Tears',          card:'npc/tiny.jpg', cover:'dumpster',     weapon:'rifle', temp:'heg',  react:480, acc:0.52, life:4500000, speed:0.23, stars:4,
    look:{skin:'#dcb7a8', build:1.12, hair:{style:'bald'}, top:{color:'#efefef'}, sleeves:'#efefef', vest:{color:'#5d5a4a',camo:'#7a7560',type:'vest'}, pants:{color:'#262628'}, boots:{color:'#111'}}},
-  {id:'duke',     name:'Duke',     title:'Duke Calabrese',      card:'npc/duke.jpg', cover:'car',     weapon:'mg', temp:'flash',     react:400, acc:0.58, life:5500000, speed:0.28, stars:5,
+  {id:'duke', bstats:{str:27,def:27,spd:23,dex:23},     name:'Duke',     title:'Duke Calabrese',      card:'npc/duke.jpg', cover:'car',     weapon:'mg', temp:'flash',     react:400, acc:0.58, life:5500000, speed:0.28, stars:5,
    look:{skin:'#d7b4a2', hair:{style:'bald'}, helmet:{style:'flatcap',color:'#a8a49a'}, top:{color:'#4a3424'}, coat:{color:'#b8864e'}, pants:{color:'#5a5a5a',stripes:true}, boots:{color:'#3a2a20'}}},
 ];
 
@@ -339,6 +339,21 @@ function normEquip(raw){
       damage: num(st.damage ?? it.damage), accuracy: num(st.accuracy ?? it.accuracy), armor: num(st.armor ?? st.armour ?? it.armor ?? it.armour) };
   }).filter(i=>i.id!=null);
 }
+async function fetchStats(key){
+  // Your own battle stats (Limited key). Torn keeps other players' stats private.
+  let j; try { j = await tornGet('/user?selections=battlestats', key); } catch(e){ return null; }
+  const v = x => typeof x==='object' && x ? (x.value ?? x.amount ?? 0) : (Number(x)||0);
+  const b = j.battlestats || j;
+  const st = {str: v(b.strength), def: v(b.defense ?? b.defence), spd: v(b.speed), dex: v(b.dexterity)};
+  return (st.str+st.def+st.spd+st.dex) > 0 ? st : null;
+}
+// stat ratio → multipliers (an even 25/25/25/25 split = 1.0 across the board)
+function statMods(st){
+  if(!st) return {str:1, def:1, spd:1, dex:1, share:null};
+  const t = st.str+st.def+st.spd+st.dex || 1, m = x => clamp(1 + (x/t - 0.25)*1.6, 0.7, 1.35);
+  return {str:m(st.str), def:m(st.def), spd:m(st.spd), dex:m(st.dex), share:{str:st.str/t, def:st.def/t, spd:st.spd/t, dex:st.dex/t}};
+}
+function ratioText(st){ const m = statMods(st).share; if(!m) return 'Even stats'; return `STR ${Math.round(m.str*100)}% · DEF ${Math.round(m.def*100)}% · SPD ${Math.round(m.spd*100)}% · DEX ${Math.round(m.dex*100)}%`; }
 async function fetchEquip(key){
   try { return normEquip(await tornGet(`/v2/user/equipment`, key)); }
   catch(e){ if(e.code===2) throw e; return normEquip(await tornGet(`/user?selections=equipment`, key)); }
@@ -729,16 +744,17 @@ $('btnLogin').onclick = async ()=>{
     store.key = key;
     try{ store.equip = await fetchEquip(key); store.equipErr = null; }
     catch(e){ store.equip = []; store.equipErr = e.message; }
+    store.bstats = await fetchStats(key);
     save(); enterLobby();
   }catch(e){ $('loginErr').textContent = (e.code===2 ? 'Torn says that key is incorrect.' : e.message); }
   finally{ $('btnLogin').disabled = false; $('btnLogin').textContent = 'Log in'; }
 };
-$('btnGuest').onclick = ()=>{ store.key=''; store.player = {id:null, name:'Guest', level:null, image:null, life:null}; store.equip = []; store.equipErr=null; save(); enterLobby(); };
+$('btnGuest').onclick = ()=>{ store.key=''; store.bstats=null; store.player = {id:null, name:'Guest', level:null, image:null, life:null}; store.equip = []; store.equipErr=null; save(); enterLobby(); };
 $('btnLogout').onclick = ()=>{ store.key=''; store.player=null; store.equip=null; save(); $('apikey').value=''; show('s-login'); };
 $('btnRefresh').onclick = async ()=>{
   if(!store.key){ $('lobbyErr').textContent = 'Log in with a key to load your loadout.'; return; }
   $('btnRefresh').textContent = 'Loading…';
-  try{ store.player = await fetchProfile(store.key); store.equip = await fetchEquip(store.key); store.equipErr = null; save(); enterLobby(); }
+  try{ store.player = await fetchProfile(store.key); store.equip = await fetchEquip(store.key); store.equipErr = null; store.bstats = await fetchStats(store.key); save(); enterLobby(); }
   catch(e){ $('lobbyErr').textContent = e.message; }
   $('btnRefresh').textContent = '↻ Refresh loadout';
 };
@@ -770,10 +786,11 @@ function enterLobby(){
   $('pName').textContent = p.name || 'Guest';
   $('pMeta').textContent = p.id ? `[${p.id}]${p.level?` · Level ${p.level}`:''}${p.faction?` · ${p.faction}`:''}` : 'Guest fighter';
   const st = store.stats;
-  $('pRecord').innerHTML = `<span class="st">Wins <b>${st.w}</b></span><span class="st">Losses <b>${st.l}</b></span><span class="st">Best draw <b>${st.best?st.best+'ms':'—'}</b></span>`;
+  $('pRecord').innerHTML = `<span class="st" style="flex-basis:100%">${store.bstats ? 'Your stat ratio: <b>'+ratioText(store.bstats)+'</b>' : (store.key ? 'Stat ratio: even (refresh loadout to read your battle stats)' : 'Stat ratio: even')}</span><span class="st">Wins <b>${st.w}</b></span><span class="st">Losses <b>${st.l}</b></span><span class="st">Best draw <b>${st.best?st.best+'ms':'—'}</b></span>`;
   $('lobbyErr').textContent = store.equipErr ? `Couldn't read your equipment (${store.equipErr}). A Limited Access key is needed for that.` : '';
   renderSlots(); renderOpps(); renderSettings();
   show('s-lobby');
+  if(store.key && store.bstats===undefined){ store.bstats = null; fetchStats(store.key).then(st=>{ store.bstats = st; save(); if(st) enterLobby(); }); }
   requestAnimationFrame(drawLobbyFigure);
 }
 function itemImg(id){ return id ? `<img src="${ITEM_IMG(id)}" alt="" onerror="this.style.visibility='hidden'">` : `<img alt="" style="visibility:hidden">`; }
@@ -831,7 +848,7 @@ function renderOpps(){
     else if(o.card){ const im = document.createElement('img'); im.className='card'; im.src=o.card; d.appendChild(im); }
     else d.appendChild(npcThumb(o));
     const t = document.createElement('div');
-    t.innerHTML = `<div class="nm">${esc(o.name)}${beaten[o.id]?' ✔':''}</div><div class="tg">${locked?'🔒 Beat the previous target':esc(o.title)+' · '+ARCH[o.weapon].label}</div>`;
+    t.innerHTML = `<div class="nm">${esc(o.name)}${beaten[o.id]?' ✔':''}</div><div class="tg">${locked?'🔒 Beat the previous target':esc(o.title)+' · '+ARCH[o.weapon].label}</div><div class="tg" style="font-size:10.5px">${ratioText(o.bstats)}</div>`;
     d.appendChild(t);
     const lv = document.createElement('div'); lv.className='lv';
     lv.innerHTML = `<b>${'★'.repeat(o.stars)}${'☆'.repeat(5-o.stars)}</b>❤ ${fmt(o.life)}`;
@@ -1010,7 +1027,8 @@ async function startMatch(){
     oppW: Object.assign({}, ARCH[opp.weapon]), myMax: (store.player && store.player.life) || 1000,
     round:0, score:[0,0], rounds:[], oppImg: loadImg(opp.image || opp.card), oppCard: opp.card ? loadImg(opp.card) : null, myImg: loadImg(store.player && store.player.image),
     particles:[], holes:[], shake:0, flash:0, hurtFlash:0, msg:'', msgSub:'', msgT:0, pointerDown:false,
-    temp: tInfo ? {info:tInfo, used:false} : null, throws:[], fx:[]
+    temp: tInfo ? {info:tInfo, used:false} : null, throws:[], fx:[],
+    myMods: statMods(store.bstats), opMods: statMods(opp.bstats)
   };
   $('duel').classList.add('active');
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
@@ -1119,7 +1137,7 @@ function update(now, dt){
   }
   else if(D.phase==='draw'){
     if(me.drawnAt==null && isRaised()){
-      me.drawnAt = now; me.readyAt = now + curGun().w.draw; me.reaction = Math.round(now - D.phaseT);
+      me.drawnAt = now; me.readyAt = now + curGun().w.draw / D.myMods.spd; me.reaction = Math.round(now - D.phaseT);
       me.aimX0 = (Math.random()<0.5?-1:1) * W*(0.12+Math.random()*0.15);
       me.aimX = me.aimX0; me.yaw = 0;
     }
@@ -1152,6 +1170,7 @@ function update(now, dt){
       if(op.state==='aiming' && exposed && now >= op.nextShot && now >= op.flinchUntil) aiShoot(now);
       if(op.burstLeft>0 && now >= op.burstNext && exposed){ aiBullet(now); op.burstLeft--; op.burstNext = now + 90; }
       coverAI(now, dt);
+      kneelAI(now, dt);
       strafe(now, dt);
     }
     if(!D.roundOver && now - D.phaseT > 40000) finishRound(me.hp >= op.hp ? 'win':'lose', 'Time ran out', now);
@@ -1202,7 +1221,8 @@ function strafe(now, dt){
     if(op.hiding){ op.v = 0; op.x += (op.coverX - op.x) * Math.min(1, dt/150); op.walk += dt*0.004; return; }
   }
   if(op.state==='waiting' && D.opp.speed < 0.1) return;
-  const range = D.opp.cover ? W*0.13 : W*0.30, sp = D.opp.speed * W / 1000 * oppMod('move', now) * (D.opp.cover ? 0.7 : 1);     // px per ms
+  const wide = D.mode==='motion' ? 0.62 : 0.4;          // motion players can turn to follow, so the street is wider
+  const range = D.opp.cover ? W*0.22 : W*wide, sp = D.opp.speed * 1.35 * W / 1000 * oppMod('move', now) * D.opMods.spd * (D.opp.cover ? 0.8 : 1);     // px per ms
   if(Math.abs(op.tx - op.x) < 4 || !op.moving){
     op.moving = true;
     if(Math.random() < 0.3 - (D.opp.stars||1)*0.04) op.pauseUntil = now + 200 + Math.random()*450;
@@ -1212,9 +1232,21 @@ function strafe(now, dt){
   if(op.pauseUntil && now < op.pauseUntil){ op.v *= 0.8; return; }
   if(op.jukeAt && now > op.jukeAt){ op.tx = (op.coverX||0) + (Math.random()*2-1) * range; op.jukeAt = now + 500 + Math.random()*(1600 - (D.opp.stars||1)*220); }
   const dir = Math.sign(op.tx - op.x);
-  op.v += (dir*sp - op.v) * Math.min(1, dt/120);
+  op.v += (dir*sp*(1 - 0.6*(op.kneel||0)) - op.v) * Math.min(1, dt/120);
   op.x += op.v * dt;
-  op.walk += Math.abs(op.v) * dt * 0.06;
+  op.walk += Math.abs(op.v) * dt * 0.06 * (1 - 0.7*(op.kneel||0));
+}
+// Dodging: drop to a crouch now and then (more often with higher dexterity and on harder NPCs)
+function kneelAI(now, dt){
+  const op = D.op;
+  if(op.state==='aiming' || op.state==='drawing'){
+    if(op.kneeling){ if(now > op.kneelUntil){ op.kneeling = false; op.nextKneel = now + (2600 - (D.opp.stars||1)*250) / D.opMods.dex * (0.6+Math.random()*0.8); } }
+    else if(now > (op.nextKneel||0)){
+      if(!op.nextKneel) op.nextKneel = now + 1200 + Math.random()*1500;
+      else { op.kneeling = true; op.kneelUntil = now + 600 + Math.random()*1000 * D.opMods.dex; }
+    }
+  }
+  op.kneel = (op.kneel||0) + ((op.kneeling ? 1 : 0) - (op.kneel||0)) * Math.min(1, dt/110);
 }
 
 function foul(text){ D.me.reaction = null; finishRound('lose', text, performance.now(), true); }
@@ -1254,7 +1286,7 @@ function fireBullet(now){
   if(D.mode==='motion'){ cx = W/2 + sw.x; cy = H/2 + sw.y; }
   else { cx = b.sx + sw.x*0.8; cy = b.sy + sw.y*0.8 - me.recoil*0.5; }
   me.recoil += w.recoil;
-  const per = (w.pellets>1 ? w.bullet*1.6/w.pellets : w.bullet) * (me.buff.strength ? 1.3 : 1);
+  const per = (w.pellets>1 ? w.bullet*1.6/w.pellets : w.bullet) * (me.buff.strength ? 1.3 : 1) * D.myMods.str / D.opMods.def;
   let total = 0, best = null;
   for(let i=0;i<w.pellets;i++){
     const a = Math.random()*Math.PI*2, r = Math.sqrt(Math.random())*w.spread*dex*(W/400);
@@ -1285,9 +1317,9 @@ function updateReload(now, tipped){
     if(!me.reloading && G.ammo===0 && now - (me.noAmmoMsg||0) > 1500){ me.noAmmoMsg = now; setMsg('No ammo left', D.guns.some(g=>g!==G && g.ammo+g.clips+(g.spare||0)>0) ? 'Switch weapon' : 'Use your temporary', 900); }
     me.reloading = false; return;
   }
-  if(!me.reloading){ me.reloading = true; me.reloadStart = now; me.reloadUntil = now + (G.byRound ? G.w.roundMs : G.w.reload); sfxClick(); }
+  if(!me.reloading){ me.reloading = true; me.reloadStart = now; me.reloadUntil = now + (G.byRound ? G.w.roundMs : G.w.reload) / D.myMods.dex; sfxClick(); }
   if(now >= me.reloadUntil){
-    if(G.byRound){ G.ammo++; G.spare--; sfxRack(); me.reloadStart = now; me.reloadUntil = canReload(G) ? now + G.w.roundMs : 0; if(!me.reloadUntil) me.reloading = false; }
+    if(G.byRound){ G.ammo++; G.spare--; sfxRack(); me.reloadStart = now; me.reloadUntil = canReload(G) ? now + G.w.roundMs / D.myMods.dex : 0; if(!me.reloadUntil) me.reloading = false; }
     else { G.ammo = G.w.mag; G.clips--; sfxRack(); me.reloading = false; me.reloadUntil = 0; }
     renderDSlots();
   }
@@ -1300,7 +1332,7 @@ function updateReloadBtn(now){
   b.classList.toggle('urgent', G.ammo===0);
   b.textContent = me.reloading ? 'LOADING… (hold)' : 'HOLD TO RELOAD';
 }
-function endBurst(now, w){ const me = D.me; me.burst = null; me.nextTurn = now + w.turnGap * (me.buff.speed ? 0.7 : 1); renderDSlots(); }
+function endBurst(now, w){ const me = D.me; me.burst = null; me.nextTurn = now + w.turnGap * (me.buff.speed ? 0.7 : 1) / D.myMods.spd; renderDSlots(); }
 function damageOpp(total, best, now, quiet){
   const op = D.op, me = D.me;
   if(op.dead) return;
@@ -1365,6 +1397,7 @@ function sway(now){
   const w = curGun().w, me = D.me, t = now/1000;
   let A = w.sway * (W/400) * (5 + me.hurt*12 + (D.mode==='touch'?2.5:0));
   if(me.buff.dexterity) A *= 0.55;
+  A /= Math.sqrt(D.myMods.dex);
   if(now < me.pepperUntil) A *= 3.2;
   if(now < me.flashUntil) A *= 1.8;
   return { x: (Math.sin(t*1.7)+0.5*Math.sin(t*4.3+1))*A, y: (Math.cos(t*1.3)+0.5*Math.sin(t*3.7))*A };
@@ -1376,7 +1409,7 @@ function puff(x,y,c){ for(let i=0;i<6;i++) D.particles.push({x,y,vx:(Math.random
 function aiShoot(now){
   const op = D.op, ow = D.oppW;
   if(op.eff.blinded && now < op.eff.blinded.start + EFFECTS.blinded.hold){ op.nextShot = op.eff.blinded.start + EFFECTS.blinded.hold + 100; return; }
-  if(op.ammo<=0){ op.ammo = ow.mag; op.nextShot = now + ow.reload; return; }
+  if(op.ammo<=0){ op.ammo = ow.mag; op.nextShot = now + ow.reload / D.opMods.dex; return; }
   const tier = D.opp.stars || 1;
   op.burstLeft = ({smg:3, mg:5})[D.opp.weapon] || 1; op.burstNext = now;
   op.nextShot = now + (2300 - (tier-1)*270) * (0.75 + Math.random()*0.5) * oppMod('pace', now);
@@ -1398,7 +1431,7 @@ function aiBullet(now){
     }
   }
   if(dmg>0){
-    dmg *= (1 - D.armour.reduce) * (me.buff.defense ? 0.7 : 1);
+    dmg *= (1 - D.armour.reduce) * (me.buff.defense ? 0.7 : 1) * D.opMods.str / D.myMods.def;
     me.hp -= dmg; me.hurt = Math.min(1, me.hurt + dmg/60); D.hurtFlash = 1; D.shake = 1; buzz(80); sfxHit();
     if(me.hp<=0) finishRound('lose', zone==='head' ? `${D.opp.name} landed a headshot` : `${D.opp.name} was quicker`, now);
   }
@@ -1422,7 +1455,7 @@ function hitTest(sx, sy){
   const cr = coverRect();
   if(cr && p.x > cr.x && p.x < cr.x+cr.w && p.y > cr.y && p.y < cr.y+cr.h) return 'cover';
   if(p.y > g.feet + g.u*2) return null;                                   // nothing hittable below the street
-  const lx = (p.x - g.x)/g.u, ly = (p.y - g.feet)/g.u - (D.op.crouch||0)*crouchDepth();
+  const lx = (p.x - g.x)/g.u, ly = ((p.y - g.feet)/g.u - (D.op.crouch||0)*crouchDepth()) / (1 - 0.38*(D.op.kneel||0));
   return figureZone(lx, ly, D.op.state==='aiming', D.opp.look.build);
 }
 
@@ -1577,6 +1610,7 @@ function drawOpponent(c, now){
   // clip at the street line so a crouching opponent never shows below the ground
   c.save(); c.beginPath(); c.rect(g.x - g.h, g.feet - g.h*1.6, g.h*2, g.h*1.6 + g.u*3); c.clip();
   c.save(); c.translate(g.x, g.feet + (op.crouch||0)*crouchDepth()*g.u);
+  c.scale(1, 1 - 0.38*(op.kneel||0));
   if(op.dead){ const k = Math.min(1,(now-op.deadT)/700); c.rotate(-k*0.3); c.scale(1+k*0.12, 1-k*0.72); c.globalAlpha = 1 - k*0.3; }
   else { c.rotate(now < op.flinchUntil ? -0.06 : op.v*0.6); }
   let aim = 0;
@@ -1625,7 +1659,7 @@ function drawCover(c){
 function drawOppOverlay(c, now){
   const g = oppGeom(), op = D.op;
   if(!op.dead && D.phase==='draw'){
-    const bw = g.h*0.5, bx = g.x - bw/2, by = Math.min(g.feet - g.h*1.12 + (op.crouch||0)*crouchDepth()*g.u, (coverRect()||{y:1e9}).y - 10);
+    const bw = g.h*0.5, bx = g.x - bw/2, by = Math.min(g.feet - g.h*1.12*(1 - 0.38*(op.kneel||0)) + (op.crouch||0)*crouchDepth()*g.u, (coverRect()||{y:1e9}).y - 10);
     c.fillStyle='rgba(0,0,0,.6)'; c.fillRect(bx-1, by-1, bw+2, 7);
     c.fillStyle = op.hp > 50 ? '#85b200' : op.hp > 25 ? '#d9a62b' : '#e0402a'; c.fillRect(bx, by, bw*clamp(op.hp/100,0,1), 5);
   }
@@ -1697,10 +1731,72 @@ function flames(c, x, y, r, a, now){
   }
 }
 
+// ----- side-view gun model used for the reload animation -----
+function gunGeo(arch, L){
+  const g = {pistol:{mx:0.18, my:0.13, mw:0.16, mh:0.42, cx:0.62, cy:-0.02},
+             smg:   {mx:0.42, my:0.12, mw:0.085, mh:0.42, cx:0.5, cy:-0.03},
+             rifle: {mx:0.42, my:0.11, mw:0.075, mh:0.32, cx:0.5, cy:-0.03},
+             mg:    {mx:0.4,  my:0.12, mw:0.17, mh:0.2, cx:0.5, cy:-0.03},
+             shotgun:{mx:0.4, my:0.12, mw:0.08, mh:0.22, cx:0.5, cy:-0.03},
+             heavy: {mx:0.45, my:0.14, mw:0.08, mh:0.2, cx:0.5, cy:-0.03}}[arch] || {mx:0.4,my:0.12,mw:0.08,mh:0.3,cx:0.5,cy:-0.03};
+  return {mx:g.mx*L, my:g.my*L, mw:g.mw*L, mh:g.mh*L, cx:g.cx*L, cy:g.cy*L};
+}
+function metal(c, x0, y0, x1, y1, base){ const gr = c.createLinearGradient(x0,y0,x1,y1); gr.addColorStop(0, shade(base,0.18)); gr.addColorStop(0.5, base); gr.addColorStop(1, shade(base,-0.35)); return gr; }
+function drawMag(c, arch, x, y, geo, alpha, full, rot){
+  c.save(); c.globalAlpha = alpha; c.translate(x + geo.mw/2, y); c.rotate(rot||0);
+  const w = geo.mw, h = geo.mh, curve = (arch==='rifle' || arch==='smg') ? w*0.9 : 0;
+  c.fillStyle = metal(c, -w/2, 0, w/2, 0, '#2b2d32');
+  c.beginPath(); c.moveTo(-w/2, 0); c.lineTo(w/2, 0); c.quadraticCurveTo(w/2 + curve*0.5, h*0.6, w/2 + curve, h); c.lineTo(-w/2 + curve, h); c.quadraticCurveTo(-w/2 + curve*0.5, h*0.6, -w/2, 0); c.closePath(); c.fill();
+  c.strokeStyle='rgba(0,0,0,.6)'; c.lineWidth=2; c.stroke();
+  c.fillStyle='rgba(255,255,255,.08)'; c.fillRect(-w/2+2, h*0.15, w*0.25, h*0.6);
+  c.fillStyle='#1a1b1e'; c.fillRect(-w/2 + curve - 2, h - h*0.06, w + 4, h*0.06);   // base plate
+  if(full){ c.fillStyle='#d9b54a'; c.beginPath(); c.ellipse(0, -h*0.015, w*0.38, h*0.035, 0, 0, 7); c.fill(); c.fillStyle='#b8862a'; c.fillRect(-w*0.38, -h*0.02, w*0.76, h*0.02); }
+  c.restore();
+}
+function drawGunBody(c, arch, x, y, L, geo, rack){
+  c.save(); c.translate(x, y);
+  const dark = '#24262a', mid = '#34373c', wood = '#5a3a20';
+  if(arch==='pistol'){
+    // frame + grip (magwell is the grip)
+    c.fillStyle = metal(c,0,0,0,L*0.3, mid);
+    c.beginPath(); c.moveTo(L*0.05, L*0.02); c.lineTo(L*0.9, L*0.02); c.lineTo(L*0.9, L*0.12); c.lineTo(L*0.4, L*0.12);
+    c.quadraticCurveTo(L*0.36, L*0.24, L*0.28, L*0.26); c.lineTo(L*0.36, L*0.6); c.lineTo(L*0.14, L*0.6); c.lineTo(L*0.12, L*0.13); c.lineTo(L*0.05, L*0.12); c.closePath(); c.fill();
+    c.strokeStyle='rgba(0,0,0,.6)'; c.lineWidth=2; c.stroke();
+    c.strokeStyle = dark; c.lineWidth = L*0.025; c.beginPath(); c.arc(L*0.36, L*0.17, L*0.06, 0.2, Math.PI*0.95); c.stroke();   // trigger guard
+    // slide (racks back)
+    c.save(); c.translate(-rack*L*0.14, 0);
+    c.fillStyle = metal(c,0,-L*0.1,0,L*0.04, '#3c3f45'); c.fillRect(L*0.02, -L*0.1, L*0.93, L*0.12);
+    c.fillStyle='rgba(0,0,0,.45)'; for(let i=0;i<6;i++) c.fillRect(L*0.06 + i*L*0.025, -L*0.085, L*0.01, L*0.09);
+    c.restore();
+  } else {
+    const isShort = arch==='smg';
+    // stock
+    c.fillStyle = arch==='rifle' ? metal(c,0,0,0,L*0.2,'#2e3034') : metal(c,0,0,0,L*0.2,dark);
+    c.beginPath(); c.moveTo(0, L*0.0); c.lineTo(L*0.22, L*0.02); c.lineTo(L*0.22, L*0.12); c.lineTo(L*0.02, L*0.2); c.closePath(); c.fill();
+    // receiver
+    c.fillStyle = metal(c,0,-L*0.06,0,L*0.13, mid); c.fillRect(L*0.2, -L*0.04, L*0.42, L*0.16);
+    // grip
+    c.fillStyle = dark; c.beginPath(); c.moveTo(L*0.27, L*0.12); c.lineTo(L*0.35, L*0.12); c.lineTo(L*0.32, L*0.3); c.lineTo(L*0.24, L*0.3); c.closePath(); c.fill();
+    c.strokeStyle = dark; c.lineWidth = L*0.012; c.beginPath(); c.arc(L*0.37, L*0.15, L*0.035, 0.1, Math.PI); c.stroke();
+    // magwell
+    c.fillStyle = shade(mid,-0.2); c.fillRect(geo.mx - L*0.01, geo.my - L*0.02, geo.mw + L*0.02, L*0.05);
+    // handguard + barrel
+    const hgEnd = isShort ? 0.82 : 0.88;
+    c.fillStyle = arch==='shotgun' ? wood : metal(c,0,-L*0.04,0,L*0.08,'#2a2c30'); c.fillRect(L*0.62, -L*0.03, L*(hgEnd-0.62), L*0.1);
+    c.fillStyle = '#1b1c1f'; c.fillRect(L*hgEnd, -L*0.005, L*(1-hgEnd), L*0.035);
+    c.fillStyle = '#1b1c1f'; c.fillRect(L*0.7, -L*0.08, L*0.02, L*0.05);     // front sight
+    // top rail / sight
+    c.fillStyle = '#1b1c1f'; c.fillRect(L*0.26, -L*0.07, L*0.3, L*0.035);
+    // charging handle (racks back)
+    c.fillStyle = '#4a4d53'; c.fillRect(L*0.5 - rack*L*0.12, -L*0.03, L*0.07, L*0.025);
+    c.strokeStyle='rgba(0,0,0,.55)'; c.lineWidth=2; c.strokeRect(L*0.2, -L*0.04, L*0.42, L*0.16);
+  }
+  c.restore();
+}
 function drawReloadView(c, now){
   const me = D.me, G = curGun(), w = G.w;
-  const cx = W*0.5, cy = H*0.74, R = Math.min(W*0.3, H*0.17);
-  c.save(); c.fillStyle='rgba(0,0,0,.25)'; c.fillRect(0, H*0.55, W, H*0.45); c.restore();
+  const cx = W*0.5, cy = G.byRound ? H*0.62 : H*0.46, R = Math.min(W*0.3, H*0.17);
+  c.save(); c.fillStyle='rgba(10,10,14,.55)'; c.fillRect(0, 0, W, H); c.restore();
   if(G.byRound){
     const n = Math.min(w.mag, 8);
     c.fillStyle='#55595f'; c.beginPath(); c.arc(cx, cy, R, 0, 7); c.fill();
@@ -1713,25 +1809,34 @@ function drawReloadView(c, now){
     }
     c.fillStyle='#2a2c30'; c.beginPath(); c.arc(cx,cy,R*0.12,0,7); c.fill();
   } else {
-    // side view of your gun: old magazine drops out, a fresh one slides up into the magwell
-    const gw = Math.min(W*0.82, H*0.5), gh = gw*0.5, gx = cx - gw/2, gy = cy - gh*0.75;
-    const k = me.reloading && me.reloadUntil ? clamp((now - me.reloadStart)/(me.reloadUntil - me.reloadStart),0,1) : (G.ammo>0 ? 1 : 0);
-    const mx = gx + gw*0.43, mw = gw*0.085, mh = gh*0.62, seat = gy + gh*0.5;   // magwell position on Torn's item art
-    // fresh magazine travel
-    const inK = clamp((k - 0.3)/0.6, 0, 1), ease = 1 - Math.pow(1 - inK, 3);
-    const newY = seat + (H - seat) * (1 - ease);
-    const drawMag = (y, alpha, full)=>{ c.globalAlpha = alpha; c.fillStyle='#24262b'; c.beginPath(); c.moveTo(mx, y); c.lineTo(mx+mw, y); c.lineTo(mx+mw*1.25, y+mh); c.lineTo(mx+mw*0.25, y+mh); c.closePath(); c.fill();
-      c.strokeStyle='#0d0d0f'; c.lineWidth=2; c.stroke(); if(full){ c.fillStyle='#d9b54a'; c.fillRect(mx+mw*0.15, y-4, mw*0.7, 6); } c.globalAlpha = 1; };
-    // old mag falling
-    if(me.reloading && k < 0.35){ const f = k/0.35; drawMag(seat + f*f*H*0.4, 1 - f, false); }
-    if(me.reloading || G.ammo>0) drawMag(newY, 1, true);
-    if(G.img && G.img.complete && G.img.naturalWidth) c.drawImage(G.img, gx, gy, gw, gh);
-    else { c.fillStyle='#1d1d1d'; c.fillRect(gx+gw*0.1, gy+gh*0.3, gw*0.8, gh*0.22); c.fillRect(gx+gw*0.4, gy+gh*0.5, gw*0.12, gh*0.35); }
-    // hand pushing the mag home
-    if(me.reloading && k > 0.3){ const skin = myLook.gloves ? myLook.gloves.color : myLook.skin; c.fillStyle = skin; c.beginPath(); c.ellipse(mx + mw*0.7, newY + mh + gh*0.12, gw*0.07, gh*0.16, 0, 0, 7); c.fill(); }
-    if(k >= 0.9 && me.reloading){ c.fillStyle='rgba(255,230,140,.6)'; c.beginPath(); c.arc(mx+mw/2, seat, gw*0.04, 0, 7); c.fill(); }
-    c.fillStyle='#fff'; c.font=`bold ${Math.max(13,H*0.02)|0}px Arial`; c.textAlign='center';
-    c.fillText(me.reloading ? 'RELOADING…' : (canReload(G) ? '' : 'NO CLIPS LEFT'), cx, gy - 16);
+    // Reload sequence on a side-view gun: mag drops → fresh mag brought up → pushed home (click) → slide/charging handle racked
+    const L = Math.min(W*0.9, H*0.55) * ({pistol:0.62, smg:0.82, rifle:1, mg:1, shotgun:1, heavy:1})[w.arch];
+    const gx = cx - L/2, gy = cy - L*0.12;
+    const k = me.reloading && me.reloadUntil ? clamp((now - me.reloadStart)/(me.reloadUntil - me.reloadStart),0,1) : 1;
+    const geo = gunGeo(w.arch, L);
+    const mx = gx + geo.mx, my = gy + geo.my;           // top-front corner of the magwell
+    // old magazine falling away
+    if(me.reloading && k < 0.25){ const f = k/0.25; drawMag(c, w.arch, mx, my + f*f*H*0.45, geo, 1 - f, false, f*0.6); }
+    // fresh magazine: rises from the bottom, lines up, then seats
+    let newY, show = true;
+    if(!me.reloading){ newY = my; show = G.ammo>0; }
+    else if(k < 0.25){ show = false; }
+    else if(k < 0.6){ const t = (k-0.25)/0.35, e = 1-Math.pow(1-t,3); newY = my + geo.mh*0.9 + (H - my)*(1-e); }
+    else if(k < 0.75){ const t = (k-0.6)/0.15; newY = my + geo.mh*0.9*(1-t*t); }
+    else newY = my;
+    if(show){
+      drawMag(c, w.arch, mx, newY, geo, 1, true, me.reloading && k>=0.25 && k<0.6 ? (1-(k-0.25)/0.35)*-0.25 : 0);
+      if(me.reloading && k >= 0.25 && k < 0.8){ const sk = myLook.gloves ? myLook.gloves.color : myLook.skin; c.fillStyle = sk; c.beginPath(); c.ellipse(mx + geo.mw*0.6, newY + geo.mh*0.95, geo.mw*1.1, geo.mh*0.32, -0.2, 0, 7); c.fill(); }
+    }
+    // slide / charging handle
+    const rack = me.reloading && k > 0.78 ? Math.sin(clamp((k-0.78)/0.2,0,1)*Math.PI) : 0;
+    drawGunBody(c, w.arch, gx, gy, L, geo, rack);
+    if(me.reloading && k > 0.72 && k < 0.8){ c.fillStyle='rgba(255,235,150,.75)'; c.beginPath(); c.arc(mx+geo.mw/2, my, L*0.035, 0, 7); c.fill(); }
+    if(me.reloading && k > 0.8){ const sk = myLook.gloves ? myLook.gloves.color : myLook.skin; c.fillStyle = sk; c.beginPath(); c.ellipse(gx + geo.cx - rack*L*0.08, gy + geo.cy, L*0.05, L*0.04, 0, 0, 7); c.fill(); }
+    c.fillStyle='#fff'; c.font=`bold ${Math.max(13,H*0.02)|0}px Arial`; c.textAlign='center'; c.textBaseline='alphabetic';
+    const stage = !me.reloading ? (canReload(G) ? '' : 'NO CLIPS LEFT') : k < 0.25 ? 'DROP MAG…' : k < 0.75 ? 'NEW MAG IN…' : 'RACK IT!';
+    c.fillText(stage, cx, gy - L*0.18);
+    c.font=`${Math.max(11,H*0.016)|0}px Arial`; c.fillStyle='rgba(255,255,255,.75)'; c.fillText(G.gun.name, cx, gy - L*0.18 - 20);
   }
   c.fillStyle='#fff'; c.font=`bold ${Math.max(14,H*0.022)|0}px Arial`; c.textAlign='center'; c.textBaseline='middle';
   c.fillText(`${ammoText(G)}`, cx, cy + R + 22);

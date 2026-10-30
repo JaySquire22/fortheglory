@@ -243,10 +243,14 @@ const ARCH = {
 const ZONE_MULT = {head:2.0, torso:1.0, arm:0.6, leg:0.6};
 // Damage scaling so fights last longer (pistol ~11 body shots, rifle ~6)
 const PLAYER_DMG = 0.25, NPC_DMG = 0.62;
-const MATCH_LEN = 2;      // fights last this many times longer (all damage divided by it)
-const RECOIL_SCALE = 0.4; // overall recoil strength
+const MATCH_LEN = 1;      // fights last this many times longer (all damage divided by it)
+const RECOIL_SCALE = 0.2; // overall recoil strength
 // NPC damage per body hit, as % of your health (High Duel: a hit takes ~20-25%)
 const AI_DMG = {pistol:21, smg:8, rifle:25, shotgun:4.5, mg:6.5, heavy:38};
+const ROUND_MS = 180000;     // 3 minute round timer
+const KILL_FRAC = 0.4; 
+const TIER_KILL = {D:1.25, C:1.12, B:1, A:0.88, S:0.75};   // share of ammo needed vs KILL_FRAC: S-tier guns kill with ~30%, D-tier ~50%
+      // landing ~40% of your ammo on the body kills (better guns need less)
 const SPARE_CLIPS = 2;          // Torn: 3 clips per attack (1 loaded + 2 spare)
 // Torn clip size and rate of fire (rounds per turn) — from the Torn wiki
 const WEAPON_DB = {
@@ -444,7 +448,11 @@ function weaponStats(gun){
   w.known = !!WEAPON_DB[(gun.name||'').toLowerCase()];
   // A full turn that all lands does ~20% (scaled by weapon damage), so a fight takes ~5-7 good turns like High Duel
   const avgRof = (db[1]+db[2])/2;
-  w.bullet = arch==='heavy' ? 34*(dmg/75) : 20*Math.pow(dmg/70, 1.4) / avgRof;
+  const ammoTot = db[0]*(1+SPARE_CLIPS), power = clamp(dmg/td.dmg, 0.6, 1.6);
+  const n0 = (gun.name||'').trim().toLowerCase(), tier = ['primary','secondary'].map(k=>TIER_LIST[k]).map(t=>TIER_ORDER.find(x=>(t[x]||[]).includes(n0))).find(Boolean) || 'D';
+  w.tier = tier;
+  w.bullet = 100/(ammoTot*KILL_FRAC*TIER_KILL[tier]) * power / (arch==='shotgun' ? 1.6 : 1);
+  w.bullet = Math.min(w.bullet, 55);   // nothing one-shots to the body
   w.spread = Math.max(arch==='shotgun' ? 26 : 3, (100-acc)*0.42);        // px at 400px width
   w.burstGap = ({pistol:120, rifle:95, shotgun:260, heavy:0})[arch] ?? 60;
   w.recoil = ({pistol:14, rifle:11, shotgun:30, smg:4.5, mg:3.5, heavy:50})[arch];
@@ -1379,7 +1387,7 @@ function newRound(){
   D.throws = []; D.fx = [];
   D.npcTempAt = D.opp.temp ? 1e15 : null; D.opBuff = {};
   renderDSlots();
-  D.op = { hp:100, ammo:D.oppW.mag, state:'idle', stateT:0, nextShot:Infinity, dead:false, deadT:0, flinchUntil:0,
+  D.op = { hp:100, ammo:D.oppW.mag, clips:SPARE_CLIPS, state:'idle', stateT:0, nextShot:Infinity, dead:false, deadT:0, flinchUntil:0,
            x:0, tx:0, v:0, walk:0, lastFire:0, eff:{} };
   D.holes = []; D.particles = []; D.roundOver=false; D.result=null;
   setMsg(D.round===1 ? D.opp.name : `Round ${D.round}`, D.phase==='ready' ? 'Hold your phone comfortably, then tap READY' : (D.mode==='motion' ? 'Holster: hold your phone flat' : 'Hold your finger on the screen'), 99999);
@@ -1468,17 +1476,19 @@ function update(now, dt){
       if(op.state==='drawing' && now >= op.readyAt) op.state='aiming';
       const exposed = op.crouch < 0.3 && (op.mode==='hold' || !op.running);     // they also fire while walking
       if(op.state==='aiming' && exposed && now >= op.nextShot && now >= op.flinchUntil) aiShoot(now);
+      if(op.burstLeft>0 && op.ammo<=0) op.burstLeft = 0;
       if(op.burstLeft>0 && now >= op.burstNext && exposed){ aiBullet(now); op.burstLeft--; op.burstNext = now + 90; }
       coverAI(now, dt);
       kneelAI(now, dt);
       strafe(now, dt);
     }
-    if(!D.roundOver && now - D.phaseT > 40000) finishRound(me.hp >= op.hp ? 'win':'lose', 'Time ran out', now);
+    if(!D.roundOver && now - D.phaseT > ROUND_MS) finishRound(me.hp >= op.hp ? 'win':'lose', 'Time ran out', now);
+    if(!D.roundOver && !me.burst && !me.reloading && op.ammo<=0 && op.clips<=0 && !op.burstLeft && D.guns.every(g=>g.ammo+g.clips+g.spare<=0)) finishRound('draw', 'Both out of ammo', now);
   }
   if(op.dead) op.v *= 0.9;
   D.particles = D.particles.filter(p=>{ p.t += dt; p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 0.0006*dt; return p.t < p.life; });
   D.shake *= Math.pow(0.002, dt/1000); D.flash *= Math.pow(0.01, dt/1000); D.hurtFlash *= Math.pow(0.02, dt/1000);
-  if(D.roundOver && now > D.nextAt){ if(D.score[0]>=2 || D.score[1]>=2) endMatch(false); else newRound(); }
+  if(D.roundOver && now > D.nextAt){ if(D.score[0]>=2 || D.score[1]>=2 || D.rounds.length>=5) endMatch(false); else newRound(); }
 }
 
 // Aiming like High Duel: the gyroscope measures how far you've turned since you drew.
@@ -1568,9 +1578,9 @@ function foul(text){ D.me.reaction = null; finishRound('lose', text, performance
 function finishRound(res, why, now, foulFlag){
   if(D.roundOver) return;
   D.roundOver = true; D.result = res; D.phase='over';
-  D.score[res==='win'?0:1]++;
+  if(res!=='draw') D.score[res==='win'?0:1]++;
   D.rounds.push({res, why, reaction:D.me.reaction??null, shots:D.me.shots, hits:D.me.hits, foul:!!foulFlag, hpLeft: Math.max(0, D.me.hp)/100*D.myMax});
-  setMsg(res==='win' ? 'You won the round' : 'You lost the round', why, 99999);
+  setMsg(res==='win' ? 'You won the round' : res==='draw' ? 'Round drawn' : 'You lost the round', why, 99999);
   D.nextAt = now + 2600;
 }
 
@@ -1752,7 +1762,7 @@ function puff(x,y,c){ for(let i=0;i<6;i++) D.particles.push({x,y,vx:(Math.random
 function aiShoot(now){
   const op = D.op, ow = D.oppW;
   if(op.eff.blinded && now < op.eff.blinded.start + EFFECTS.blinded.hold){ op.nextShot = op.eff.blinded.start + EFFECTS.blinded.hold + 100; return; }
-  if(op.ammo<=0){ op.ammo = ow.mag; op.nextShot = now + ow.reload / D.opMods.dex; return; }
+  if(op.ammo<=0){ if(op.clips>0){ op.clips--; op.ammo = ow.mag; op.nextShot = now + ow.reload / D.opMods.dex; } else op.nextShot = Infinity; return; }
   const tier = D.opp.stars || 1;
   op.burstLeft = ({smg:3, mg:5})[D.opp.weapon] || 1; op.burstNext = now;
   op.nextShot = now + (2300 - (tier-1)*270) * (0.75 + Math.random()*0.5) * oppMod('pace', now) * (D.opBuff.speed ? 0.5 : 1);
@@ -2535,13 +2545,17 @@ function drawHUD(c, now){
     c.strokeStyle='rgba(0,0,0,.8)'; c.lineWidth=1; c.strokeRect(W - cw - 10 + .5, top + 84 + .5, cw-1, ch-1);
   }
   // round pips
-  for(let i=0;i<3;i++){
-    const x = W/2 - 18 + i*18, y = top + 92;
+  const pips = Math.max(3, Math.min(5, D.rounds.length + (D.roundOver ? 0 : 1)));
+  for(let i=0;i<pips;i++){
+    const x = W/2 - (pips-1)*9 + i*18, y = top + 92;
     c.beginPath(); c.arc(x,y,6,0,7);
     const r = D.rounds[i];
-    c.fillStyle = r ? (r.res==='win' ? '#85b200' : '#e0402a') : 'rgba(0,0,0,.55)'; c.fill();
+    c.fillStyle = r ? (r.res==='win' ? '#85b200' : r.res==='draw' ? '#999' : '#e0402a') : 'rgba(0,0,0,.55)'; c.fill();
     c.strokeStyle='rgba(255,255,255,.5)'; c.lineWidth=1.2; c.stroke();
   }
+  if(D.phase==='draw' && !D.roundOver){ const left = Math.max(0, ROUND_MS - (performance.now() - D.phaseT)), sec = Math.ceil(left/1000);
+    c.font='bold 13px Arial'; c.textAlign='center'; c.textBaseline='middle'; c.fillStyle = sec<=15 ? '#f05a3a' : '#fff'; c.shadowColor='#000'; c.shadowOffsetY=1;
+    c.fillText(`${Math.floor(sec/60)}:${String(sec%60).padStart(2,'0')}`, W/2, top + 110); c.shadowOffsetY=0; }
   // reload / switching
   const me = D.me, G = curGun();
   if(D.phase==='draw' && me.drawnAt!=null && !me.reloading && G.ammo===0 && canReload(G)){ centerTag(c, D.mode==='motion' ? 'OUT OF LEAD — TIP DOWN & TAP' : 'OUT OF LEAD — HOLD RELOAD', H*0.4, '#ff6a4a'); }
@@ -2650,19 +2664,19 @@ cv.addEventListener('touchend', e=>{ if(D) D.pointerDown = e.touches.length>0; }
    RESULTS
    ========================================================= */
 function showResults(d){
-  const won = d.score[0] > d.score[1];
+  const won = d.score[0] > d.score[1], drew = d.score[0]===d.score[1];
   const st = store.stats;
-  if(won){ st.w++; st.beaten = st.beaten||{}; if(!d.opp.torn) st.beaten[d.opp.id] = true; } else st.l++;
+  if(drew){ st.d = (st.d||0)+1; } else if(won){ st.w++; st.beaten = st.beaten||{}; if(!d.opp.torn) st.beaten[d.opp.id] = true; } else st.l++;
   const reacts = d.rounds.map(r=>r.reaction).filter(x=>x!=null);
   if(reacts.length){ const b = Math.min(...reacts); if(!st.best || b < st.best) st.best = b; }
   save();
-  $('rTitle').textContent = won ? 'You won' : 'You lost';
-  $('rTitle').className = 'big ' + (won ? 'win' : 'lose');
+  $('rTitle').textContent = drew ? 'Draw' : won ? 'You won' : 'You lost';
+  $('rTitle').className = 'big ' + (drew ? '' : won ? 'win' : 'lose');
   $('rSub').textContent = `${d.score[0]} – ${d.score[1]} vs ${d.opp.name}`;
   const sh = d.rounds.reduce((a,r)=>a+r.shots,0), hi = d.rounds.reduce((a,r)=>a+r.hits,0);
   const bestDraw = reacts.length ? (Math.min(...reacts)/1000).toFixed(2)+'s' : '—';
   $('rTable').innerHTML = `<tr><td>Best draw time</td><td><b>${bestDraw}</b></td></tr><tr><td>Accuracy</td><td><b>${sh?Math.round(hi/sh*100):0}%</b> (${hi}/${sh})</td></tr><tr><td>Health left</td><td><b>${fmt(d.rounds[d.rounds.length-1].hpLeft)}</b> / ${fmt(d.myMax)}</td></tr>`
-    + `<tr><th>Rd</th><th>Result</th></tr>` + d.rounds.map((r,i)=>`<tr><td>${i+1}</td><td>${r.res==='win'?'✔ Won':'✖ Lost'} · ${r.reaction!=null?(r.reaction/1000).toFixed(2)+'s draw':'no draw'} · ${r.hits}/${r.shots} hits<div class="note">${esc(r.why)}</div></td></tr>`).join('');
+    + `<tr><th>Rd</th><th>Result</th></tr>` + d.rounds.map((r,i)=>`<tr><td>${i+1}</td><td>${r.res==='win'?'✔ Won':r.res==='draw'?'= Draw':'✖ Lost'} · ${r.reaction!=null?(r.reaction/1000).toFixed(2)+'s draw':'no draw'} · ${r.hits}/${r.shots} hits<div class="note">${esc(r.why)}</div></td></tr>`).join('');
   show('s-result');
 }
 

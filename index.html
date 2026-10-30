@@ -946,13 +946,20 @@ function onOrient(e){
   }
 }
 function onMotion(e){
-  const r=e.rotationRate; if(r && r.gamma!=null){ sensor.rateY = r.gamma; sensor.rateAt = performance.now(); }
+  const r=e.rotationRate;
+  if(r && (r.alpha!=null || r.beta!=null || r.gamma!=null)){
+    // device-frame angular velocity in deg/s: x = beta, y = gamma, z = alpha
+    sensor.rx = r.beta||0; sensor.ry = r.gamma||0; sensor.rz = r.alpha||0; sensor.rateY = sensor.ry; sensor.rateAt = performance.now();
+  }
   const g=e.accelerationIncludingGravity;
   if(g && g.y!=null){
+    const m = Math.hypot(g.x||0, g.y, g.z||0);
+    if(m > 3){ const k = sensor.up ? 0.2 : 1, ux = (g.x||0)*sensor.gSign/m, uy = g.y*sensor.gSign/m, uz = (g.z||0)*sensor.gSign/m;
+      sensor.up = sensor.up ? [sensor.up[0]+(ux-sensor.up[0])*k, sensor.up[1]+(uy-sensor.up[1])*k, sensor.up[2]+(uz-sensor.up[2])*k] : [ux,uy,uz]; }
     const gy=g.y*sensor.gSign, gz=(g.z||0)*sensor.gSign;
     if(Math.hypot(g.x||0,g.y,g.z||0) > 3){
       const p = Math.atan2(gy, gz)/D2R;
-      sensor.gPitch = sensor.gPitch==null ? p : sensor.gPitch + (p - sensor.gPitch)*0.35;
+      sensor.gPitch = sensor.gPitch==null ? p : sensor.gPitch + (p - sensor.gPitch)*0.25;
       sensor.gAt = performance.now(); sensor.ok = true;
     }
   }
@@ -975,7 +982,7 @@ async function enableSensors(){
   const t0 = performance.now();
   while(!sensor.ok && performance.now()-t0 < 1500) await new Promise(r=>setTimeout(r,60));
   await new Promise(r=>setTimeout(r,150));
-  if(sensor.gPitch!=null && sensor.gPitch < -20){ sensor.gSign *= -1; sensor.gPitch = -sensor.gPitch; }
+  if(sensor.gPitch!=null && sensor.gPitch < -20){ sensor.gSign *= -1; sensor.gPitch = -sensor.gPitch; if(sensor.up) sensor.up = sensor.up.map(v=>-v); }
   return sensor.ok;
 }
 
@@ -1004,11 +1011,11 @@ $('recentreBtn').onpointerdown = e=>{ e.stopPropagation(); e.preventDefault(); r
 // Re-centre: whatever way the phone points now becomes straight ahead (and, if raised, your aim height)
 function recentre(){
   if(!D || D.mode!=='motion') return;
-  D.headRef = sensor.headU;
   const p = pitchNow();
-  if(p!=null && p > 45) { store.settings.grip = clamp(p, 45, 110); save(); }
-  if(D.me){ D.me.yawRef = null; D.me.gamma0 = sensor.gamma; D.me.yaw = 0; D.me.aimX0 = 0; }
-  setMsg('RE-CENTRED', 'Aim reset to where you\'re pointing', 700); sfxClick();
+  if(p!=null && p > 30){ D.aimPitch = clamp(p, 30, 120); store.settings.grip = D.aimPitch; save(); }
+  // centre the view on the opponent: whatever way you point now = looking at them
+  if(D.me){ const target = D.op ? D.op.x : 0; D.me.yawRef = null; D.me.yaw = 0; D.me.aimX0 = target; D.me.aimX = target; D.me.aimY = 0; }
+  setMsg('RE-CENTRED', 'Pointing straight at your opponent', 700); sfxClick();
 }
 
 async function startMatch(){
@@ -1028,7 +1035,7 @@ async function startMatch(){
     round:0, score:[0,0], rounds:[], oppImg: loadImg(opp.image || opp.card), oppCard: opp.card ? loadImg(opp.card) : null, myImg: loadImg(store.player && store.player.image),
     particles:[], holes:[], shake:0, flash:0, hurtFlash:0, msg:'', msgSub:'', msgT:0, pointerDown:false,
     temp: tInfo ? {info:tInfo, used:false} : null, throws:[], fx:[],
-    myMods: statMods(store.bstats), opMods: statMods(opp.bstats)
+    myMods: statMods(store.bstats), opMods: statMods(opp.bstats), aimPitch: store.settings.grip
   };
   $('duel').classList.add('active');
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
@@ -1100,7 +1107,7 @@ function calibrate(){
   if(!D) return;
   const p = pitchNow();
   store.settings.grip = clamp(p ?? 85, 45, 110); save();
-  D.headRef = sensor.headU; D.calibrated = true;
+  D.aimPitch = store.settings.grip; D.calibrated = true;
   $('readyBtn').style.display = 'none';
   D.phase = 'holster'; D.phaseT = performance.now();
   setMsg(D.round===1 ? D.opp.name : `Round ${D.round}`, 'Holster: hold your phone flat', 99999); sfxClick();
@@ -1138,8 +1145,8 @@ function update(now, dt){
   else if(D.phase==='draw'){
     if(me.drawnAt==null && isRaised()){
       me.drawnAt = now; me.readyAt = now + curGun().w.draw / D.myMods.spd; me.reaction = Math.round(now - D.phaseT);
-      me.aimX0 = (Math.random()<0.5?-1:1) * W*(0.12+Math.random()*0.15);
-      me.aimX = me.aimX0; me.yaw = 0;
+      me.aimX0 = (Math.random()<0.5?-1:1) * W*(0.05+Math.random()*0.1) - D.op.x*0;  // small offset; turning finds the target
+      me.aimX = me.aimX0; me.yaw = 0; me.yawRef = null;
     }
     if(D.mode==='motion' && me.drawnAt!=null) updateAim(now, dt);
     me.recoil *= Math.pow(0.0025, dt/1000);
@@ -1181,25 +1188,25 @@ function update(now, dt){
   if(D.roundOver && now > D.nextAt){ if(D.score[0]>=2 || D.score[1]>=2) endMatch(false); else newRound(); }
 }
 
+// Aiming like High Duel: the gyroscope measures how far you've turned since you drew.
+// Turning = rotation around the real-world vertical, so it works however you hold the phone and never uses the compass.
+// Up/down = how far the phone is tilted from your aim height (set by READY / RE-CENTRE).
 function updateAim(now, dt){
   const me = D.me, s = store.settings;
-  const ppd = (W/34) * s.sens, inv = s.invX ? -1 : 1;
+  const ppd = (W/44) * s.sens, inv = s.invX ? -1 : 1;
   const p = pitchNow();
-  // horizontal: compass-style heading once the phone is roughly level, else gyro, else side tilt
-  const headFresh = sensor.headU!=null && now - sensor.hAt < 300;
-  const level = p!=null && p > 55;
-  if(headFresh && level){
-    if(D.headRef!=null){ me.yawSrc='head'; me.aimX0 = 0; me.yaw = inv * (sensor.headU - D.headRef) * ppd; }
-    else { if(me.yawRef==null || me.yawSrc!=='head'){ me.yawRef = sensor.headU - me.yaw/(ppd*inv||1); me.yawSrc='head'; } me.yaw = inv * (sensor.headU - me.yawRef) * ppd; }
-  } else if(now - sensor.rateAt < 300 && level){
-    me.yawSrc = 'gyro'; me.yaw += inv * sensor.rateY * dt/1000 * ppd;
-  } else if(sensor.gamma!=null && !headFresh && level){
-    if(me.gamma0==null) me.gamma0 = sensor.gamma;
-    me.yawSrc = 'tilt'; me.yaw = inv * (sensor.gamma - me.gamma0) * ppd;
+  const gyroFresh = now - sensor.rateAt < 250 && sensor.up;
+  if(gyroFresh){
+    const u = sensor.up, turn = sensor.rx*u[0] + sensor.ry*u[1] + sensor.rz*u[2];   // deg/s around vertical (+ = turning left)
+    if(Math.abs(turn) > 0.6) me.yaw -= inv * turn * dt/1000 * ppd;                 // tiny dead-zone stops creep
+    me.yawSrc = 'gyro';
+  } else if(sensor.headU!=null && now - sensor.hAt < 300 && p!=null && p > 55){
+    if(me.yawRef==null){ me.yawRef = sensor.headU - me.yaw/(ppd*inv||1); }
+    me.yaw = inv * (sensor.headU - me.yawRef) * ppd; me.yawSrc = 'head';
   }
-  const tx = clamp(me.aimX0 + me.yaw, -W*0.95, W*0.95);
-  const ty = clamp((s.grip - (p ?? s.grip)) * ppd, -H*0.8, H*0.95);
-  const k = 1 - Math.pow(0.0005, dt/1000);   // light smoothing
+  const tx = clamp(me.aimX0 + me.yaw, -W*1.0, W*1.0);
+  const ty = clamp(((D.aimPitch ?? s.grip) - (p ?? s.grip)) * ppd, -H*0.8, H*0.95);
+  const k = 1 - Math.pow(0.0002, dt/1000);
   me.aimX += (tx - me.aimX) * k; me.aimY += (ty - me.aimY) * k;
 }
 
@@ -1355,17 +1362,19 @@ function useTemp(){
   if(!T || T.used || D.phase!=='draw' || D.roundOver || me.drawnAt==null) return;
   const info = T.info; T.used = true; renderDSlots();
   if(info.kind==='self'){ me.buff[info.buff] = true; setMsg(info.name.toUpperCase(), info.desc, 1300); sfxClick(); return; }
-  const g = oppGeom();
-  const tgt = D.mode==='motion' ? toWorld(W/2, H/2) : {x: g.x, y: g.feet - g.h*0.45};
+  // No aiming needed: it goes straight at the opponent (leading them a little if they're moving)
+  const g = oppGeom(), cam = camera(), dur = 700;
+  const lead = D.op.v * dur * 0.9;
+  const tx = g.x + lead, ty = g.feet - g.h*0.05;
+  D.throwAnim = {t0: now, img: info.id ? loadImg(ITEM_IMG(info.id)) : null};
   if(info.kind==='spray'){
-    const cam = camera();
-    for(let i=0;i<26;i++) D.particles.push({x: W*0.62 + cam.x, y: H*0.8 + cam.y, vx:(tgt.x-(W*0.62+cam.x))/500*(0.8+Math.random()*0.4)+(Math.random()-0.5)*0.15, vy:(tgt.y-(H*0.8+cam.y))/500*(0.8+Math.random()*0.4), t:0, life:500, c:'rgba(255,120,40,.7)', r:3+Math.random()*4});
-    if(Math.abs(tgt.x - g.x) < W*info.range && !D.op.dead){ applyEffect(info.effect, info.dur, now); setMsg(EFFECTS[info.effect].label, `${info.name} hit`, 900); }
-    else setMsg('MISSED', `${info.name} missed`, 800);
+    D.sprays = D.sprays || [];
+    D.sprays.push({t0: now, dur: 600, tx: g.x, ty: g.feet - g.h*0.85});
+    if(!D.op.dead){ setTimeout(()=>{ if(!D || D.op.dead) return; applyEffect(info.effect, info.dur, performance.now()); setMsg(EFFECTS[info.effect].label, `${info.name} hit`, 900); }, 450); }
+    setMsg('SPRAY!', info.name, 500);
     return;
   }
-  const cam = camera();
-  D.throws.push({info, t0:now, dur:650, fx: W*0.6 + cam.x, fy: H*0.95 + cam.y, tx: tgt.x, ty: g.feet - g.h*0.05});
+  D.throws.push({info, t0: now + 180, dur, fx: W*0.62 + cam.x, fy: H*0.88 + cam.y, tx, ty, img: D.throwAnim.img});
   setMsg('THROWN', info.name, 600);
 }
 function updateThrows(now){
@@ -1373,7 +1382,7 @@ function updateThrows(now){
     const t = D.throws[i];
     if(now - t.t0 < t.dur) continue;
     D.throws.splice(i,1);
-    const info = t.info, g = oppGeom(), R = info.radius*W + g.h*0.18;
+    const info = t.info, g = oppGeom(), R = Math.max(info.radius*W, g.h*0.45) + g.h*0.18;
     const d = Math.abs(t.tx - g.x);
     if(info.fx) addFx(info.fx, t.tx, t.ty, now, info.fx==='smoke' ? 2500 : info.fx==='gas' ? 2200 : info.fx==='fire' ? 1200 : 700);
     if(info.fx==='explode'){ sfxBang(true); D.shake = 1; }
@@ -1592,6 +1601,7 @@ function render(now){
   c.filter = 'none';
   c.restore();
   drawPlayerView(c, now);
+  drawThrowHand(c, now);
   // effects on you
   const me = D.me;
   if(pep){ c.fillStyle = `rgba(200,60,20,${0.18 + 0.06*Math.sin(now/90)})`; c.fillRect(0,0,W,H); }
@@ -1672,18 +1682,40 @@ function drawOppOverlay(c, now){
   }
   c.globalAlpha = 1;
 }
+function drawThrowHand(c, now){
+  const a = D.throwAnim; if(!a) return;
+  const t = (now - a.t0)/420; if(t > 1){ D.throwAnim = null; return; }
+  // arm swings up from the bottom right and releases towards the opponent
+  const ang = -0.9 + t*1.6, len = H*0.32, bx = W*0.78, by = H*1.02;
+  const hx = bx + Math.sin(ang)*len*0.55, hy = by - Math.cos(ang)*len*(0.55 + 0.25*Math.sin(t*Math.PI));
+  const skin = myLook.skin, glove = myLook.gloves ? myLook.gloves.color : skin;
+  c.save(); c.globalAlpha = t < 0.85 ? 1 : (1-t)/0.15;
+  limb(c, bx, by, hx, hy, W*0.09, W*0.07, skin);
+  c.fillStyle = glove; c.beginPath(); c.ellipse(hx, hy, W*0.05, W*0.06, ang, 0, 7); c.fill();
+  if(t < 0.42 && a.img && a.img.complete && a.img.naturalWidth){ c.drawImage(a.img, hx - W*0.08, hy - W*0.06, W*0.16, W*0.08); }
+  c.restore();
+}
 function drawEffects(c, now){
   const g = oppGeom(), op = D.op;
   // thrown items in flight
   for(const t of D.throws){
+    if(now < t.t0) continue;
     const k = clamp((now - t.t0)/t.dur, 0, 1);
-    const x = t.fx + (t.tx - t.fx)*k, y = t.fy + (t.ty - t.fy)*k - Math.sin(k*Math.PI)*H*0.35;
-    const sz = 14*(1-k) + 4;
-    c.save(); c.translate(x,y); c.rotate(now/60);
-    c.fillStyle = '#3a3f2c'; c.beginPath(); c.ellipse(0,0,sz*0.6,sz*0.8,0,0,7); c.fill();
-    c.fillStyle = '#888'; c.fillRect(-sz*0.2,-sz*1.1,sz*0.4,sz*0.4);
+    const x = t.fx + (t.tx - t.fx)*k, y = t.fy + (t.ty - t.fy)*k - Math.sin(k*Math.PI)*H*0.32;
+    const sz = 42*(1-k) + 10;
+    // shadow on the street
+    c.fillStyle='rgba(0,0,0,.3)'; c.beginPath(); c.ellipse(t.fx + (t.tx-t.fx)*k, t.fy + (t.ty-t.fy)*k, sz*0.5, sz*0.12, 0, 0, 7); c.fill();
+    c.save(); c.translate(x,y); c.rotate(now/70);
+    if(t.img && t.img.complete && t.img.naturalWidth) c.drawImage(t.img, -sz, -sz/2, sz*2, sz);
+    else { c.fillStyle = '#3a3f2c'; c.beginPath(); c.ellipse(0,0,sz*0.35,sz*0.45,0,0,7); c.fill(); c.fillStyle = '#888'; c.fillRect(-sz*0.12,-sz*0.6,sz*0.24,sz*0.2); }
     c.restore();
   }
+  // pepper spray stream
+  if(D.sprays){ D.sprays = D.sprays.filter(sp=> now - sp.t0 < sp.dur);
+    const cam = camera();
+    for(const sp of D.sprays){ const k = (now - sp.t0)/sp.dur, sx = W*0.6 + cam.x, sy = H*0.82 + cam.y;
+      for(let i=0;i<14;i++){ const f = ((i/14) + k*2) % 1; const x = sx + (sp.tx - sx)*f + Math.sin(i*7+now/40)*f*14, y = sy + (sp.ty - sy)*f + Math.cos(i*5+now/50)*f*10;
+        c.fillStyle = `rgba(255,${120+i*5},40,${0.55*(1-f*0.6)})`; c.beginPath(); c.arc(x, y, 3 + f*12, 0, 7); c.fill(); } } }
   // landing effects
   D.fx = D.fx.filter(f=> now - f.t0 < f.dur);
   for(const f of D.fx){
@@ -1939,7 +1971,7 @@ function drawHUD(c, now){
     if(D.mode==='motion'){
       const p = pitchNow();
       c.font=`${Math.max(11,H*0.015)|0}px Arial`; c.fillStyle='rgba(255,255,255,.75)';
-      const turn = sensor.heading!=null ? ` · Turn ${Math.round((sensor.heading+360)%360)}°` : (now - sensor.rateAt < 500 ? ' · Gyro ok' : ' · No turn sensor');
+      const turn = now - sensor.rateAt < 500 ? ' · Gyro ok' : (sensor.heading!=null ? ' · Compass only' : ' · No turn sensor');
       c.fillText(p==null ? 'No tilt reading from your phone' : `Tilt ${Math.round(p)}°${turn}`, W/2, H*0.77 + 34);
     }
   }

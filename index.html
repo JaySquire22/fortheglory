@@ -45,6 +45,12 @@ button:disabled{opacity:.5}
 .slot.sel{background:linear-gradient(180deg,#5c5c2a,#45451c);border-color:#7a7a33}
 .slot.off{opacity:.45;cursor:default}
 .slot.tempslot{border-color:#4a4a6a}
+#armList .tierhd{display:flex;align-items:center;gap:8px;margin:10px 0 4px;padding:5px 8px;border-radius:4px;background:#222;border-left:4px solid #888;font-size:12px;color:#ccc;position:sticky;top:0;z-index:1}
+#armList .tierhd b{color:#fff;font-size:13px;letter-spacing:.5px}
+#armList .tierhd span{flex:1}
+#armList .tierhd i{font-style:normal;color:#999}
+#armList .tierhd.tS{border-color:#e0b020}#armList .tierhd.tA{border-color:#c0392b}#armList .tierhd.tB{border-color:#8e44ad}#armList .tierhd.tC{border-color:#2e86c1}#armList .tierhd.tD{border-color:#7f8c8d}
+#armList .slot.locked{opacity:.4}
 #armList .slot{margin:3px 0}
 #armList .slot.sel{background:linear-gradient(180deg,#5c5c2a,#45451c);border-color:#7a7a33}
 #tempPicker .slot{margin:3px 0}
@@ -268,10 +274,10 @@ const TEMP_TYPES = [
   [/molotov|firework|flare/i,       {kind:'area', effect:'burning', dur:5000, radius:0.14, fx:'fire',  desc:'Sets them on fire'}],
   [/pepper/i,                       {kind:'spray', effect:'peppered', dur:4500, range:0.16, desc:'Close range: wrecks their aim'}],
   [/grenade|frag/i,                 {kind:'blast', dmg:20, radius:0.14, fx:'explode', desc:'Explosive'}],
-  [/epinephrine/i,                  {kind:'self', buff:'strength',  desc:'+30% damage this round'}],
-  [/melatonin/i,                    {kind:'self', buff:'speed',     desc:'Faster firing this round'}],
-  [/serotonin/i,                    {kind:'self', buff:'defense',   desc:'-30% damage taken this round'}],
-  [/tyrosine/i,                     {kind:'self', buff:'dexterity', desc:'Steadier aim this round'}],
+  [/epinephrine/i,                  {kind:'self', buff:'strength',  desc:'+50% damage this round'}],
+  [/melatonin/i,                    {kind:'self', buff:'speed',     desc:'+50% firing speed this round'}],
+  [/serotonin/i,                    {kind:'self', buff:'defense',   desc:'-50% damage taken this round'}],
+  [/tyrosine/i,                     {kind:'self', buff:'dexterity', desc:'+50% steadier aim & recoil control this round'}],
   [/./,                             {kind:'blast', dmg:7, radius:0.05, fx:'thud', desc:'Thrown for a little damage'}],
 ];
 function tempInfo(item){ if(!item) return null; for(const [rx,t] of TEMP_TYPES) if(rx.test(item.name)) return Object.assign({name:item.name, id:item.id}, t); return null; }
@@ -409,7 +415,7 @@ function roleOf(item){
   return archOf(item) ? 'secondary' : 'armour';
 }
 // Weapons taken out of the game
-const BANNED = /^(bolas|book|brick|claymore( mine)?|fireworks?|glitter bomb|nail bomb|ninja stars?|party popper|semtex|snowballs?|stygian darkness|trout|wrench|flare gun|flame ?throwers?|harpoon|homemade pocket shotgun|pocket shotgun|lorcin 380|pink mac-?10|prototype|slingshot|tranquili[sz]er gun|taser|egg propelled launcher|gold plated ak-?47|neutrilux 2000|nock gun|rheinmetall? mg ?3|sig 550|snow cannon)$/i;
+const BANNED = /^(throwing knife|sand|bolas|book|brick|claymore( mine)?|fireworks?|glitter bomb|nail bomb|ninja stars?|party popper|semtex|snowballs?|stygian darkness|trout|wrench|flare gun|flame ?throwers?|harpoon|homemade pocket shotgun|pocket shotgun|lorcin 380|pink mac-?10|prototype|slingshot|tranquili[sz]er gun|taser|egg propelled launcher|gold plated ak-?47|neutrilux 2000|nock gun|rheinmetall? mg ?3|sig 550|snow cannon)$/i;
 function isBanned(name){ const n = String(name||'').trim(); return BANNED.test(n) || /^dual\s/i.test(n); }
 function buildLoadout(equip){
   const out = {primary:null, secondary:null, melee:null, temporary:null, armour:[]};
@@ -941,6 +947,34 @@ async function loadCatalogue(){
   for(const n of Object.keys(WEAPON_DB)) (prim.has(n) ? tornCatalogue.primary : tornCatalogue.secondary).push({id:null, name:titleCase(n), wt:''});
   return tornCatalogue;
 }
+
+// ---- Tier system: wins needed to unlock (display only while testing) ----
+const TIER_UNLOCK = {D:0, C:25, B:50, A:100, S:250};
+const TIER_ORDER = ['D','C','B','A','S'];
+const TIER_LOCKS_ON = false;   // flip to true to enforce unlocks
+const TIER_LIST = {
+  primary: {
+    S:['minigun','negev ng-5','m249 saw','pkm','stoner 96'],
+    A:['armalite m-15a4','steyr aug','tavor tar-21','xm8 rifle','sig 552','heckler & koch sl8'],
+    B:['m4a1 colt carbine','m16 a2 rifle','ak-47','jackhammer','benelli m4 super','benelli m1 tactical','enfield sa-80','sks carbine'],
+    C:['p90','bushmaster carbon 15','ak74u','mag 7','ithaca 37','sawed-off shotgun'],
+    D:['mp5 navy','thompson','vektor cr-21','9mm uzi','mp 40'] },
+  secondary: {
+    S:['type 98 anti tank','smaw launcher','rpg launcher','china lake','milkor mgl'],
+    A:['desert eagle','s&w m29','magnum','bt mp9','fiveseven','ruger 57'],
+    B:['springfield 1911','s&w revolver','qsz-92','mp5k','tmp','skorpion','blunderbuss'],
+    C:['glock 17','usp','beretta 92fs','beretta m9','taurus pt92','luger'],
+    D:['raven mp25','beretta pico','cobra derringer','crossbow','blowgun'] },
+  temporary: {
+    S:['epinephrine','serotonin','melatonin','tyrosine'],
+    A:['heg','flash grenade','concussion grenade'],
+    B:['grenade','molotov cocktail','tear gas'],
+    C:['smoke grenade'],
+    D:['pepper spray'] }
+};
+function tierOf(name, cat){ const n = String(name||'').trim().toLowerCase(), t = TIER_LIST[cat]||{};
+  for(const k of TIER_ORDER) if((t[k]||[]).includes(n)) return k; return 'D'; }
+function tierOpen(tier){ return !TIER_LOCKS_ON || ((store.stats && store.stats.w) || 0) >= TIER_UNLOCK[tier]; }
 function armouryGun(pick, role){ if(!pick) return null; const it = {id: pick.id, name: pick.name, sub: pick.wt}; return Object.assign({role, arch: archOf(it) || (role==='primary' ? 'rifle' : 'pistol'), armoury:true}, it); }
 function applyArmoury(lo){
   const A = store.armoury || {};
@@ -960,15 +994,23 @@ async function renderArmoury(){
   const cat = await loadCatalogue();
   const q = ($('armSearch').value||'').toLowerCase();
   const list = (cat[armTab]||[]).filter(i=> !isBanned(i.name) && (!q || i.name.toLowerCase().includes(q)));
-  box.innerHTML = list.map(i=>{
+  const wins = (store.stats && store.stats.w) || 0;
+  const row = i=>{
     const sel = A[armTab] && A[armTab].name===i.name;
     let sub = '';
     if(armTab==='temporary'){ const ti = tempInfo(i); sub = ti ? ti.desc : ''; }
     else { const g = armouryGun({id:i.id, name:i.name, wt:i.wt}, armTab), w = weaponStats(g); sub = `${ARCH[g.arch].label} · ${w.mag}/${w.mag} (${SPARE_CLIPS}) · RoF ${w.rofMin}-${w.rofMax}${w.scope?' · scope':''}`; }
-    return `<div class="slot ${sel?'sel':''}" data-n="${esc(i.name)}">${itemImg(i.id)}<div style="min-width:0"><div class="sn">${esc(i.name)}</div><div class="ss">${sub}</div></div></div>`;
+    const open = tierOpen(tierOf(i.name, armTab));
+    return `<div class="slot ${sel?'sel':''} ${open?'':'locked'}" data-n="${esc(i.name)}">${itemImg(i.id)}<div style="min-width:0"><div class="sn">${esc(i.name)}</div><div class="ss">${sub}</div></div></div>`;
+  };
+  box.innerHTML = TIER_ORDER.map(t=>{
+    const items = list.filter(i=>tierOf(i.name, armTab)===t); if(!items.length) return '';
+    const need = TIER_UNLOCK[t], got = wins >= need;
+    const lab = need ? `Unlocks at ${need} wins · you have ${wins}${got?' ✓':''}` : 'Available from the start';
+    return `<div class="tierhd t${t}"><b>${t} TIER</b><span>${lab}</span><i>${items.length}</i></div>` + items.map(row).join('');
   }).join('') || '<div class="note" style="padding:8px">Nothing matches.</div>';
   box.querySelectorAll('.slot').forEach(el=> el.onclick = ()=>{
-    const it = list.find(i=>i.name===el.dataset.n); store.armoury = Object.assign({}, store.armoury, {[armTab]: it});
+    const it = list.find(i=>i.name===el.dataset.n); if(!tierOpen(tierOf(it.name, armTab))) return; store.armoury = Object.assign({}, store.armoury, {[armTab]: it});
     if(armTab!=='temporary'){ store.gun = it.id ?? null; store.gunName = it.name; }
     save(); enterLobby(); });
 }
@@ -1544,16 +1586,16 @@ function fireBullet(now){
   if(G !== curGun() || G.ammo<=0 || D.roundOver){ endBurst(now, w); return; }
   G.ammo--; b.left--; me.shots++; me.lastShot = now; updateAmmoText();
   sfxBang(!!w.splash); D.shake = Math.min(1, D.shake + w.kick/50); D.flash = Math.max(D.flash, w.arch==='mg'||w.arch==='smg' ? .12 : .28);
-  const sw = sway(now), dex = me.buff.dexterity ? 0.7 : 1;
+  const sw = sway(now), dex = me.buff.dexterity ? 0.5 : 1;
   let cx, cy;
   if(D.mode==='motion'){ cx = W/2 + sw.x; cy = H/2 + sw.y; }
   else { cx = b.sx + sw.x*0.8 + (me.recoilX||0)*0.8; cy = b.sy + sw.y*0.8 - me.recoil*0.8; }
   // kick: autos climb and wander as the burst goes on; dexterity helps you control it
-  const ctl = 1/Math.sqrt(D.myMods.dex) * (me.buff.dexterity ? 0.8 : 1), sc = W/400;
+  const ctl = 1/Math.sqrt(D.myMods.dex) * (me.buff.dexterity ? 0.5 : 1), sc = W/400;
   me.recoil += w.kick * sc * ctl;
   me.heat = Math.min(3, (me.heat||0) + w.heat * ctl);
   me.recoilX = (me.recoilX||0) + (Math.random()-0.45) * 2 * w.kickX * sc * ctl;
-  const per = (w.pellets>1 ? w.bullet*1.6/w.pellets : w.bullet) * (me.buff.strength ? 1.3 : 1) * D.myMods.str / D.opMods.def;
+  const per = (w.pellets>1 ? w.bullet*1.6/w.pellets : w.bullet) * (me.buff.strength ? 1.5 : 1) * D.myMods.str / D.opMods.def;
   let total = 0, best = null;
   for(let i=0;i<w.pellets;i++){
     const a = Math.random()*Math.PI*2, r = Math.sqrt(Math.random())*w.spread*dex*(W/400);
@@ -1571,7 +1613,7 @@ function fireBullet(now){
   }
   if(total>0){ me.hits++; damageOpp(total, best, now); }
   if(b.left<=0) endBurst(now, w);
-  else b.next = now + w.burstGap * (me.buff.speed ? 0.7 : 1);
+  else b.next = now + w.burstGap * (me.buff.speed ? 0.5 : 1);
 }
 // Revolvers and tube shotguns load one round at a time; magazine guns swap a clip
 function loadsByRound(G){ return G.w.arch==='shotgun' && !/jackhammer|mag 7/i.test(G.gun.name) || /magnum|revolver|s&w|m29|derringer|blunderbuss/i.test(G.gun.name) || !G.gun.id && G.w.arch==='pistol' && false; }
@@ -1603,7 +1645,7 @@ function updateReloadBtn(now){
   b.classList.toggle('urgent', G.ammo===0);
   b.textContent = me.reloading ? 'LOADING… (hold)' : 'HOLD TO RELOAD';
 }
-function endBurst(now, w){ const me = D.me; me.burst = null; me.nextTurn = now + w.turnGap * (me.buff.speed ? 0.7 : 1) / D.myMods.spd; renderDSlots(); }
+function endBurst(now, w){ const me = D.me; me.burst = null; me.nextTurn = now + w.turnGap * (me.buff.speed ? 0.5 : 1) / D.myMods.spd; renderDSlots(); }
 function damageOpp(total, best, now, quiet){
   const op = D.op, me = D.me;
   if(op.dead) return;
@@ -1653,13 +1695,13 @@ function updateThrows(now){
     if(info.fx==='flash'){ sfxBang(false); D.flash = Math.max(D.flash, 0.5); }
     if(D.op.dead) continue;
     if(d > R){ setMsg('MISSED', `${info.name} landed too far away`, 900); continue; }
-    if(info.kind==='blast'){ const dmg = info.dmg * (0.45 + 0.55*(1 - d/R)) * (D.me.buff.strength ? 1.3 : 1); damageOpp(dmg, 'torso', now); setMsg(info.dmg>15 ? 'DIRECT HIT' : 'HIT', `${Math.round(dmg)}% damage`, 800); }
+    if(info.kind==='blast'){ const dmg = info.dmg * (0.45 + 0.55*(1 - d/R)) * (D.me.buff.strength ? 1.5 : 1); damageOpp(dmg, 'torso', now); setMsg(info.dmg>15 ? 'DIRECT HIT' : 'HIT', `${Math.round(dmg)}% damage`, 800); }
     else { applyEffect(info.effect, info.dur, now); setMsg(EFFECTS[info.effect].label, info.name, 900); }
   }
 }
 function npcUseTemp(now){
   const me = D.me, t = D.opp.temp, nm = D.opp.name;
-  const def = (me.buff.defense ? 0.7 : 1) * (1 - D.armour.reduce);
+  const def = (me.buff.defense ? 0.5 : 1) * (1 - D.armour.reduce);
   if(t==='molotov'){ me.burnUntil = now + 4000; setMsg('ON FIRE', `${nm} threw a Molotov`, 1100); sfxBang(false,true); }
   else if(t==='pepper'){ me.pepperUntil = now + 4000; setMsg('PEPPERED', `${nm} used Pepper Spray`, 1100); }
   else if(t==='heg'){ const dmg = 24*def; me.hp -= dmg; me.hurt = Math.min(1, me.hurt+0.5); D.shake = 1; D.hurtFlash = 1; sfxBang(true); buzz([60,30,120]); setMsg('EXPLOSION', `${nm} threw a HEG`, 1100); if(me.hp<=0) finishRound('lose', `${nm}'s HEG finished you`, now); }
@@ -1669,7 +1711,7 @@ function npcUseTemp(now){
 function sway(now){
   const w = curGun().w, me = D.me, t = now/1000;
   let A = w.sway * (W/400) * (5 + me.hurt*12 + (D.mode==='touch'?2.5:0));
-  if(me.buff.dexterity) A *= 0.55;
+  if(me.buff.dexterity) A *= 0.5;
   A /= Math.sqrt(D.myMods.dex);
   if(me.scoped) A *= 0.6;
   A *= 1 + (me.heat||0) * 2.2;                     // aim gets shaky while you're firing
@@ -1707,7 +1749,7 @@ function aiBullet(now){
     }
   }
   if(dmg>0){
-    dmg *= (1 - D.armour.reduce) * (me.buff.defense ? 0.7 : 1) * D.opMods.str / D.myMods.def;
+    dmg *= (1 - D.armour.reduce) * (me.buff.defense ? 0.5 : 1) * D.opMods.str / D.myMods.def;
     me.hp -= dmg; me.hurt = Math.min(1, me.hurt + dmg/60); D.hurtFlash = 1; D.shake = 1; buzz(80); sfxHit();
     if(me.hp<=0) finishRound('lose', zone==='head' ? `${D.opp.name} landed a headshot` : `${D.opp.name} was quicker`, now);
   }

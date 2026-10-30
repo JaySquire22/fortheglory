@@ -1094,11 +1094,18 @@ function npcThumb(o){
   return cv;
 }
 // Test dummy: you, built from your own loadout and stats
+// Opponent weapon: archetype defaults, or the exact gun when the NPC copies your kit
+function oppWeapon(opp){
+  const ow = Object.assign({}, ARCH[opp.weapon]); ow.dmgMul = 1;
+  if(opp.gun){ const w = weaponStats(opp.gun), ref = weaponStats({arch: w.arch, name:''});
+    ow.mag = w.mag; ow.dmgMul = clamp(w.bullet / ref.bullet, 0.5, 2); ow.name = opp.gun.name; }
+  return ow;
+}
 function selfNpc(){
   const p = store.player || {}, gun = currentGun();
   const o = { id:'self', name: p.name || 'You', title:'You (test dummy)', card: p.image || null, weapon: gun.arch || 'pistol',
     react:600, acc:0.45, life: p.life || 1000, speed:0.16, stars:3, bstats: store.bstats || null, look: myLook, cover:null,
-    temp: (()=>{ const t = tempInfo(currentTemp()); if(!t) return null; return t.effect==='blinded' ? 'flash' : t.effect==='burning' ? 'molotov' : t.effect==='peppered' ? 'pepper' : t.kind==='blast' ? 'heg' : null; })() };
+    gun, tempItem: currentTemp(), temp: tempInfo(currentTemp()) ? 'mirror' : null };
   if(selectedOpp && selectedOpp.id==='self') selectedOpp = o;
   return o;
 }
@@ -1304,13 +1311,14 @@ async function startMatch(){
     const ok = await enableSensors();
     if(!ok){ alert("Couldn't read your phone's motion sensors, so this fight uses Touch controls."); mode='touch'; }
   }
-  const opp = ghostOpp || selectedOpp;
+  let opp = ghostOpp || selectedOpp;
+  if(opp && opp.id==='self') opp = selfNpc();
   const start = currentGun();
   const guns = usableGuns().map(g=>{ const w = weaponStats(g); const G = {gun:g, w, ammo:w.mag, clips:SPARE_CLIPS, spare:0, img: loadImg(g.id ? ITEM_IMG(g.id) : null)}; G.byRound = loadsByRound(G); return G; });
   const tInfo = tempInfo(currentTemp());
   D = {
     mode, opp, guns, cur: Math.max(0, guns.findIndex(x=>x.gun===start)), armour: armourStats(loadout.armour),
-    oppW: Object.assign({}, ARCH[opp.weapon]), myMax: (store.player && store.player.life) || 1000,
+    oppW: oppWeapon(opp), opBuff:{}, myMax: (store.player && store.player.life) || 1000,
     round:0, score:[0,0], rounds:[], oppImg: loadImg(opp.image || opp.card), oppCard: opp.card ? loadImg(opp.card) : null, myImg: loadImg(store.player && store.player.image),
     particles:[], holes:[], shake:0, flash:0, hurtFlash:0, msg:'', msgSub:'', msgT:0, pointerDown:false,
     temp: tInfo ? {info:tInfo, used:false} : null, throws:[], fx:[],
@@ -1367,7 +1375,7 @@ function newRound(){
   D.guns.forEach(g=>{ g.ammo = g.w.mag; g.clips = g.byRound ? 0 : SPARE_CLIPS; g.spare = g.byRound ? g.w.mag*SPARE_CLIPS : 0; });
   if(D.temp) D.temp.used = false;
   D.throws = []; D.fx = [];
-  D.npcTempAt = D.opp.temp ? 1e15 : null;
+  D.npcTempAt = D.opp.temp ? 1e15 : null; D.opBuff = {};
   renderDSlots();
   D.op = { hp:100, ammo:D.oppW.mag, state:'idle', stateT:0, nextShot:Infinity, dead:false, deadT:0, flinchUntil:0,
            x:0, tx:0, v:0, walk:0, lastFire:0, eff:{} };
@@ -1421,7 +1429,7 @@ function update(now, dt){
       op.state='waiting'; op.stateT = now + react;
       op.readyAt = now + react + D.oppW.draw + 120;
       op.nextShot = op.readyAt + 80 + Math.random()*220;
-      if(D.opp.temp) D.npcTempAt = now + 4000 + Math.random()*5000;
+      if(D.opp.temp) D.npcTempAt = now + (D.opp.temp==='mirror' ? 1200 + Math.random()*1800 : 4000 + Math.random()*5000);
     }
   }
   else if(D.phase==='draw'){
@@ -1649,6 +1657,7 @@ function endBurst(now, w){ const me = D.me; me.burst = null; me.nextTurn = now +
 function damageOpp(total, best, now, quiet){
   const op = D.op, me = D.me;
   if(op.dead) return;
+  if(D.opBuff && D.opBuff.defense) total *= 0.5;
   op.hp -= total; op.flinchUntil = now + 220;
   { const g = oppGeom(); (D.dmgNums = D.dmgNums||[]).push({x: g.x + (Math.random()-0.5)*g.h*0.25, y: g.feet - g.h*0.9 + (op.crouch||0)*crouchDepth()*g.u, txt: fmt(total/100*D.opp.life), t0: now, crit: best==='head'}); } op.nextShot = Math.max(op.nextShot, now + 220 + D.oppW.rof*0.4);
   if(op.state==='drawing' || op.state==='waiting') op.readyAt += 120;
@@ -1700,7 +1709,19 @@ function updateThrows(now){
   }
 }
 function npcUseTemp(now){
-  const me = D.me, t = D.opp.temp, nm = D.opp.name;
+  const me = D.me, nm = D.opp.name;
+  let t = D.opp.temp;
+  if(t==='mirror'){
+    const info = tempInfo(D.opp.tempItem); if(!info) return;
+    if(info.kind==='self'){ D.opBuff[info.buff] = true; setMsg(info.name.toUpperCase(), `${nm} used ${info.name}`, 1200); sfxClick(); return; }
+    if(info.kind==='blast' && !/heg|high explosive/i.test(info.name)){
+      const def = (me.buff.defense ? 0.5 : 1) * (1 - D.armour.reduce), dmg = info.dmg*0.75*def;
+      me.hp -= dmg; me.hurt = Math.min(1, me.hurt+0.4); D.shake = 1; D.hurtFlash = 1; sfxBang(true); buzz([60,30,100]);
+      setMsg('EXPLOSION', `${nm} threw a ${info.name}`, 1100); if(me.hp<=0) finishRound('lose', `${nm}'s ${info.name} finished you`, now); return; }
+    const hz = {smoked:[5000,1.6,'SMOKED'], gassed:[5000,1.8,'GASSED'], dazed:[3500,2.2,'DAZED']}[info.effect];
+    if(hz){ me.hazeUntil = now + hz[0]; me.hazeMul = hz[1]; sfxBang(false); setMsg(hz[2], `${nm} threw ${info.name}`, 1100); return; }
+    t = info.effect==='blinded' ? 'flash' : info.effect==='burning' ? 'molotov' : info.effect==='peppered' ? 'pepper' : 'heg';
+  }
   const def = (me.buff.defense ? 0.5 : 1) * (1 - D.armour.reduce);
   if(t==='molotov'){ me.burnUntil = now + 4000; setMsg('ON FIRE', `${nm} threw a Molotov`, 1100); sfxBang(false,true); }
   else if(t==='pepper'){ me.pepperUntil = now + 4000; setMsg('PEPPERED', `${nm} used Pepper Spray`, 1100); }
@@ -1717,6 +1738,7 @@ function sway(now){
   A *= 1 + (me.heat||0) * 2.2;                     // aim gets shaky while you're firing
   if(now < me.pepperUntil) A *= 3.2;
   if(now < me.flashUntil) A *= 1.8;
+  if(now < (me.hazeUntil||0)) A *= me.hazeMul||1.6;
   const hf = 1 + (me.heat||0)*1.5;
   return { x: (Math.sin(t*1.7*hf)+0.5*Math.sin(t*4.3*hf+1))*A, y: (Math.cos(t*1.3*hf)+0.5*Math.sin(t*3.7*hf))*A };
 }
@@ -1730,12 +1752,12 @@ function aiShoot(now){
   if(op.ammo<=0){ op.ammo = ow.mag; op.nextShot = now + ow.reload / D.opMods.dex; return; }
   const tier = D.opp.stars || 1;
   op.burstLeft = ({smg:3, mg:5})[D.opp.weapon] || 1; op.burstNext = now;
-  op.nextShot = now + (2300 - (tier-1)*270) * (0.75 + Math.random()*0.5) * oppMod('pace', now);
+  op.nextShot = now + (2300 - (tier-1)*270) * (0.75 + Math.random()*0.5) * oppMod('pace', now) * (D.opBuff.speed ? 0.5 : 1);
 }
 function aiBullet(now){
   const op = D.op, ow = D.oppW, me = D.me;
   op.ammo--; op.lastFire = now; sfxBang(false, true);
-  let acc = D.opp.acc * oppMod('acc', now);
+  let acc = D.opp.acc * oppMod('acc', now) * (D.opBuff.dexterity ? 1.5 : 1);
   if(now < D.me.flashUntil) acc *= 1.1;
   if(op.hp < 50) acc *= 0.85;
   if(Math.abs(op.v) > 0.05) acc *= 0.85;               // shooting on the move
@@ -1745,7 +1767,7 @@ function aiBullet(now){
     if(Math.random() < acc * (ow.pellets>1 ? 0.75 : 1)){
       const r = Math.random(); const z = r<0.12?'head':r<0.72?'torso':r<0.86?'arm':'leg';
       let m = ZONE_MULT[z]; if(z==='head' && D.armour.helmet) m *= 0.5;
-      dmg += (AI_DMG[D.opp.weapon]||20) * m; if(!zone || ZONE_MULT[z]>ZONE_MULT[zone]) zone=z;
+      dmg += (AI_DMG[D.opp.weapon]||20) * (ow.dmgMul||1) * (D.opBuff.strength ? 1.5 : 1) * m; if(!zone || ZONE_MULT[z]>ZONE_MULT[zone]) zone=z;
     }
   }
   if(dmg>0){

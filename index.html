@@ -81,6 +81,7 @@ button:disabled{opacity:.5}
 .dslot.empty{color:#888}
 .dslot.temp{background:rgba(40,40,48,.88)}
 .dslot.temp.empty{opacity:.45}
+#readyBtn{position:absolute;left:50%;bottom:22%;transform:translateX(-50%);width:70%;max-width:320px;margin:0;padding:16px;font-size:20px;z-index:4;display:none;background:linear-gradient(180deg,#8fb32e,#5e7d12);color:#fff}
 #reloadBtn{position:absolute;right:8px;bottom:calc(env(safe-area-inset-bottom) + 52px);width:auto;margin:0;padding:12px 14px;font-size:13px;z-index:3;display:none;background:linear-gradient(180deg,#5a5a5a,#383838)}
 #reloadBtn.urgent{background:linear-gradient(180deg,#d9472b,#8a2414);color:#fff;animation:pulse .6s infinite alternate}
 @keyframes pulse{to{transform:scale(1.06)}}
@@ -163,11 +164,7 @@ details summary{cursor:pointer;color:#7aa7d8;font-size:13px;margin-top:10px}
       <div id="motionOpts">
         <label>Aim sensitivity</label>
         <input type="range" id="sens" min="0.5" max="2" step="0.1" value="1" style="padding:0">
-        <label>Grip</label>
-        <div class="seg" id="gripSeg">
-          <button data-grip="90">Upright</button>
-          <button data-grip="70">Relaxed (tilted back)</button>
-        </div>
+
         <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="invX" style="width:auto"> Flip left/right aiming</label>
       </div>
     </div></div>
@@ -196,6 +193,7 @@ details summary{cursor:pointer;color:#7aa7d8;font-size:13px;margin-top:10px}
   <div id="dslots"></div>
   <button id="quit">✕ Leave</button>
   <button id="reloadBtn">RELOAD</button>
+  <button id="readyBtn">READY</button>
 </div>
 
 <script>
@@ -219,7 +217,9 @@ const ARCH = {
 };
 const ZONE_MULT = {head:2.0, torso:1.0, arm:0.6, leg:0.6};
 // Damage scaling so fights last longer (pistol ~11 body shots, rifle ~6)
-const PLAYER_DMG = 0.25, NPC_DMG = 0.30;
+const PLAYER_DMG = 0.25, NPC_DMG = 0.62;
+// NPC damage per body hit, as % of your health (High Duel: a hit takes ~20-25%)
+const AI_DMG = {pistol:21, smg:8, rifle:25, shotgun:4.5, mg:6.5, heavy:38};
 const SPARE_CLIPS = 2;          // Torn: 3 clips per attack (1 loaded + 2 spare)
 // Torn clip size and rate of fire (rounds per turn) — from the Torn wiki
 const WEAPON_DB = {
@@ -270,13 +270,13 @@ const EFFECTS = {
 const NPCS = [
   {id:'jimmy',    name:'Jimmy',    title:'Jimmy Two-Shins',     card:'npc/jimmy.jpg',    weapon:'pistol', react:850, acc:0.34, life:2000000, speed:0.10, stars:1,
    look:{skin:'#dcbba5', hair:{style:'short',color:'#9a5530'}, beard:'#8a4a2a', top:{color:'#6a1a1a'}, vest:{color:'#2a2c30',type:'vest'}, coat:{color:'#2a2a2d'}, pants:{color:'#c3c8d2'}, boots:{color:'#4a2e1e'}}},
-  {id:'fernando', name:'Fernando', title:'Fingers Fernando',    card:'npc/fernando.jpg', weapon:'shotgun', temp:'molotov',react:700, acc:0.40, life:2500000, speed:0.14, stars:2,
+  {id:'fernando', name:'Fernando', title:'Fingers Fernando',    card:'npc/fernando.jpg', cover:'bin', weapon:'shotgun', temp:'molotov',react:700, acc:0.40, life:2500000, speed:0.14, stars:2,
    look:{skin:'#c9a184', hair:{style:'long',color:'#2a2622'}, beard:'#2a2622', mask:{type:'eyes',color:'#111'}, sleeves:'#5a3a28', poncho:{color:'#9a9a9a',color2:'#4e4e4e'}, pants:{color:'#2a2a2c'}, boots:{color:'#111'}}},
-  {id:'leslie',   name:'Leslie',   title:'Leslie Chanthavong',  card:'npc/leslie.jpg',   weapon:'smg', temp:'pepper',    react:580, acc:0.46, life:4000000, speed:0.19, stars:3,
+  {id:'leslie',   name:'Leslie',   title:'Leslie Chanthavong',  card:'npc/leslie.jpg', cover:'car',   weapon:'smg', temp:'pepper',    react:580, acc:0.46, life:4000000, speed:0.19, stars:3,
    look:{skin:'#e6d3c8', hair:{style:'short',color:'#ececec'}, glasses:true, mask:{type:'face',color:'#3a6fd0'}, top:{color:'#111',pattern:'mesh'}, pants:{color:'#e2e2e2'}, boots:{color:'#111'}}},
-  {id:'tiny',     name:'Tiny',     title:'Tiny Tears',          card:'npc/tiny.jpg',     weapon:'rifle', temp:'heg',  react:480, acc:0.52, life:4500000, speed:0.23, stars:4,
+  {id:'tiny',     name:'Tiny',     title:'Tiny Tears',          card:'npc/tiny.jpg', cover:'dumpster',     weapon:'rifle', temp:'heg',  react:480, acc:0.52, life:4500000, speed:0.23, stars:4,
    look:{skin:'#dcb7a8', build:1.12, hair:{style:'bald'}, top:{color:'#efefef'}, sleeves:'#efefef', vest:{color:'#5d5a4a',camo:'#7a7560',type:'vest'}, pants:{color:'#262628'}, boots:{color:'#111'}}},
-  {id:'duke',     name:'Duke',     title:'Duke Calabrese',      card:'npc/duke.jpg',     weapon:'mg', temp:'flash',     react:400, acc:0.58, life:5500000, speed:0.28, stars:5,
+  {id:'duke',     name:'Duke',     title:'Duke Calabrese',      card:'npc/duke.jpg', cover:'car',     weapon:'mg', temp:'flash',     react:400, acc:0.58, life:5500000, speed:0.28, stars:5,
    look:{skin:'#d7b4a2', hair:{style:'bald'}, helmet:{style:'flatcap',color:'#a8a49a'}, top:{color:'#4a3424'}, coat:{color:'#b8864e'}, pants:{color:'#5a5a5a',stripes:true}, boots:{color:'#3a2a20'}}},
 ];
 
@@ -389,11 +389,14 @@ function weaponStats(gun){
   const dmg = gun.damage || td.dmg, acc = gun.accuracy || td.acc;
   w.arch = arch; w.mag = db[0]; w.rofMin = db[1]; w.rofMax = db[2]; w.dmgStat = dmg; w.accStat = acc;
   w.known = !!WEAPON_DB[(gun.name||'').toLowerCase()];
-  w.bullet = arch==='heavy' ? 34*(dmg/75) : 5.5*Math.pow(dmg/70, 1.6);    // damage per round (body)
+  // A full turn that all lands does ~20% (scaled by weapon damage), so a fight takes ~5-7 good turns like High Duel
+  const avgRof = (db[1]+db[2])/2;
+  w.bullet = arch==='heavy' ? 34*(dmg/75) : 20*Math.pow(dmg/70, 1.4) / avgRof;
   w.spread = Math.max(arch==='shotgun' ? 26 : 3, (100-acc)*0.42);        // px at 400px width
   w.burstGap = ({pistol:120, rifle:95, shotgun:260, heavy:0})[arch] ?? 60;
   w.recoil = ({pistol:14, rifle:11, shotgun:30, smg:4.5, mg:3.5, heavy:50})[arch];
   w.turnGap = 300;
+  w.roundMs = arch==='shotgun' ? 380 : 300;
   return w;
 }
 function armourStats(armour){
@@ -839,13 +842,13 @@ $('btnGhost').onclick = async ()=>{
 function renderSettings(){
   const s = store.settings;
   document.querySelectorAll('#modeSeg button').forEach(b=>{ b.classList.toggle('on', b.dataset.mode===s.mode); b.onclick=()=>{ s.mode=b.dataset.mode; save(); renderSettings(); }; });
-  document.querySelectorAll('#gripSeg button').forEach(b=>{ b.classList.toggle('on', Number(b.dataset.grip)===Number(s.grip)); b.onclick=()=>{ s.grip=Number(b.dataset.grip); save(); renderSettings(); }; });
+
   $('sens').value = s.sens; $('sens').oninput = e=>{ s.sens=parseFloat(e.target.value); save(); };
   $('invX').checked = !!s.invX; $('invX').onchange = e=>{ s.invX=e.target.checked; save(); };
   $('motionOpts').style.display = s.mode==='motion' ? '' : 'none';
   $('modeHelp').innerHTML = s.mode==='motion'
-    ? 'Hold your phone at your hip pointing at the ground. Stay still. On the bell and <b>DRAW!</b>, raise it like a gun. Turn and tilt the phone to aim, tap anywhere to fire. To reload, point the phone at the ground then raise it again. Tap a weapon slot to switch guns. Raise early and you lose the round.'
-    : 'Keep a finger held on the screen. On <b>DRAW!</b>, lift it and tap your target to shoot. Tap RELOAD when your clip runs low. Lift early and you lose the round. Works on PC with a mouse.';
+    ? 'Hold your phone how you\'ll aim and tap <b>READY</b> to calibrate. Then <b>holster</b> by holding the phone flat. On the bell and <b>DRAW!</b>, raise it, turn and tilt to aim, and tap anywhere to fire. Out of lead? <b>Tip the gun down</b> to reload, then raise it again. Tap a weapon slot to switch guns. Raise early and you lose the round.'
+    : 'Keep a finger held on the screen. On <b>DRAW!</b>, lift it and tap your target to shoot. Hold RELOAD to load. Lift early and you lose the round. Works on PC with a mouse.';
 }
 
 /* =========================================================
@@ -950,7 +953,9 @@ $('btnDuel').onclick = startMatch;
 $('btnRematch').onclick = startMatch;
 $('btnBack').onclick = enterLobby;
 $('quit').onclick = ()=> endMatch(true);
-$('reloadBtn').onpointerdown = e=>{ e.stopPropagation(); e.preventDefault(); if(D) startReload(performance.now()); };
+$('reloadBtn').onpointerdown = e=>{ e.stopPropagation(); e.preventDefault(); if(D) D.me.reloadHold = true; };
+['pointerup','pointercancel','pointerleave'].forEach(ev=> $('reloadBtn').addEventListener(ev, ()=>{ if(D) D.me.reloadHold = false; }));
+$('readyBtn').onpointerdown = e=>{ e.stopPropagation(); e.preventDefault(); calibrate(); };
 
 async function startMatch(){
   audio();
@@ -961,7 +966,7 @@ async function startMatch(){
   }
   const opp = ghostOpp || selectedOpp;
   const start = currentGun();
-  const guns = usableGuns().map(g=>{ const w = weaponStats(g); return {gun:g, w, ammo:w.mag, clips:SPARE_CLIPS, img: loadImg(g.id ? ITEM_IMG(g.id) : null)}; });
+  const guns = usableGuns().map(g=>{ const w = weaponStats(g); const G = {gun:g, w, ammo:w.mag, clips:SPARE_CLIPS, spare:0, img: loadImg(g.id ? ITEM_IMG(g.id) : null)}; G.byRound = loadsByRound(G); return G; });
   const tInfo = tempInfo(loadout.temporary);
   D = {
     mode, opp, guns, cur: Math.max(0, guns.findIndex(x=>x.gun===start)), armour: armourStats(loadout.armour),
@@ -993,29 +998,31 @@ function curGun(){ return D.guns[D.cur]; }
 
 function renderDSlots(){
   const box = $('dslots');
-  let html = D.guns.map((g,i)=>`<div class="dslot ${i===D.cur?'sel':''} ${g.ammo+g.clips===0?'empty':''}" data-i="${i}">${g.gun.id?`<img src="${ITEM_IMG(g.gun.id)}" alt="" onerror="this.style.visibility='hidden'">`:'<div style="height:38px;line-height:38px;color:#aaa">🔫</div>'}<span>${g.ammo}/${g.w.mag} (${g.clips})</span></div>`).join('');
+  let html = D.guns.map((g,i)=>`<div class="dslot ${i===D.cur?'sel':''} ${g.ammo+g.clips+g.spare===0?'empty':''}" data-i="${i}">${g.gun.id?`<img src="${ITEM_IMG(g.gun.id)}" alt="" onerror="this.style.visibility='hidden'">`:'<div style="height:38px;line-height:38px;color:#aaa">🔫</div>'}<span>${ammoText(g)}</span></div>`).join('');
   if(D.temp){ const T = D.temp; html += `<div class="dslot temp ${T.used?'empty':''}" data-t="1">${T.info.id?`<img src="${ITEM_IMG(T.info.id)}" alt="" onerror="this.style.visibility='hidden'">`:''}<span style="color:#ddd">${T.used?0:1}</span></div>`; }
   box.innerHTML = html;
   box.querySelectorAll('.dslot').forEach(el=> el.onpointerdown = e=>{ e.stopPropagation(); e.preventDefault(); if(el.dataset.t) useTemp(); else switchGun(Number(el.dataset.i)); });
 }
+function ammoText(g){ return g.byRound ? `${g.ammo}/${g.w.mag} +${g.spare}` : `${g.ammo}/${g.w.mag} (${g.clips})`; }
 function updateAmmoText(){
   const el = $('dslots').children[D.cur]; const g = curGun();
-  if(el && el.lastElementChild) el.lastElementChild.textContent = `${g.ammo}/${g.w.mag} (${g.clips})`;
+  if(el && el.lastElementChild) el.lastElementChild.textContent = ammoText(g);
 }
 function switchGun(i){
   if(!D || i===D.cur || D.phase!=='draw' || D.roundOver) { if(D && D.phase!=='draw' && i!==D.cur){ D.cur=i; renderDSlots(); } return; }
   D.cur = i; const me = D.me, now = performance.now();
-  if(me.reloadUntil){ me.reloadUntil = 0; me.reloadGun = null; }
+  me.reloading = false; me.reloadUntil = 0;
   if(me.drawnAt!=null){ me.readyAt = now + curGun().w.draw; me.switchAt = now; }
   renderDSlots();
 }
 
 function newRound(){
   D.round++;
-  D.phase = 'holster'; D.phaseT = performance.now(); D.holsterSince = null;
+  D.phase = (D.mode==='motion' && !D.calibrated) ? 'ready' : 'holster'; D.phaseT = performance.now(); D.holsterSince = null;
+  $('readyBtn').style.display = D.phase==='ready' ? 'block' : 'none';
   D.me = { hp:100, lastShot:0, drawnAt:null, readyAt:null, aimX:0, aimY:0, sx:0, sy:0, recoil:0, shots:0, hits:0, hurt:0, reloadUntil:0, yawRef:null,
            burst:null, nextTurn:0, buff:{}, burnUntil:0, pepperUntil:0, flashUntil:0 };
-  D.guns.forEach(g=>{ g.ammo = g.w.mag; g.clips = SPARE_CLIPS; });
+  D.guns.forEach(g=>{ g.ammo = g.w.mag; g.clips = g.byRound ? 0 : SPARE_CLIPS; g.spare = g.byRound ? g.w.mag*SPARE_CLIPS : 0; });
   if(D.temp) D.temp.used = false;
   D.throws = []; D.fx = [];
   D.npcTempAt = D.opp.temp ? 1e15 : null;
@@ -1023,11 +1030,25 @@ function newRound(){
   D.op = { hp:100, ammo:D.oppW.mag, state:'idle', stateT:0, nextShot:Infinity, dead:false, deadT:0, flinchUntil:0,
            x:0, tx:0, v:0, walk:0, lastFire:0, eff:{} };
   D.holes = []; D.particles = []; D.roundOver=false; D.result=null;
-  setMsg(D.round===1 ? D.opp.name : `Round ${D.round}`, D.mode==='motion' ? 'Holster: point your phone at the ground' : 'Hold your finger on the screen', 99999);
+  setMsg(D.round===1 ? D.opp.name : `Round ${D.round}`, D.phase==='ready' ? 'Hold your phone comfortably, then tap READY' : (D.mode==='motion' ? 'Holster: hold your phone flat' : 'Hold your finger on the screen'), 99999);
+  // cover position for this round
+  D.op.coverX = D.opp.cover ? (Math.random()*2-1) * W*0.14 : null;
+  D.op.x = D.op.coverX ?? 0; D.op.crouch = 0; D.op.hideUntil = 0; D.op.exposeUntil = 0;
+  D.dmgNums = [];
 }
 function setMsg(a,b,dur){ D.msg=a; D.msgSub=b||''; D.msgT=performance.now()+(dur||1500); }
-function isHolstered(){ if(D.mode==='touch') return D.pointerDown; const p = pitchNow(); return p!=null && p < -35 && p > -150; }
-function isRaised(){ if(D.mode==='touch') return !D.pointerDown; const p = pitchNow(); return p!=null && p > 20; }
+// High Duel style: holster = phone held flat (screen up); draw = raise towards your calibrated aim
+function isHolstered(){ if(D.mode==='touch') return D.pointerDown; const p = pitchNow(); return p!=null && Math.abs(p) < 24; }
+function isRaised(){ if(D.mode==='touch') return !D.pointerDown; const p = pitchNow(); return p!=null && p > Math.min(50, store.settings.grip - 22); }
+function calibrate(){
+  if(!D) return;
+  const p = pitchNow();
+  store.settings.grip = clamp(p ?? 85, 45, 110); save();
+  D.headRef = sensor.headU; D.calibrated = true;
+  $('readyBtn').style.display = 'none';
+  D.phase = 'holster'; D.phaseT = performance.now();
+  setMsg(D.round===1 ? D.opp.name : `Round ${D.round}`, 'Holster: hold your phone flat', 99999); sfxClick();
+}
 
 function loop(now){
   if(!D) return;
@@ -1047,7 +1068,7 @@ function update(now, dt){
     } else D.holsterSince = null;
   }
   else if(D.phase==='steady'){
-    if(!isHolstered()) return foul('You drew too early!');
+    if(D.mode==='touch' ? !isHolstered() : (pitchNow()!=null && pitchNow() > 40)) return foul('You drew too early!');
     if(now >= D.drawAt){
       D.phase='draw'; D.phaseT=now; sfxBell(); buzz([120,40,120]);
       setMsg('DRAW!','',900); D.flash = 1;
@@ -1070,13 +1091,12 @@ function update(now, dt){
     // bursts (one tap = one Torn turn)
     let guard = 0;
     while(me.burst && now >= me.burst.next && guard++ < 6) fireBullet(now);
-    // reload: lower the phone (point it at the ground) or tap RELOAD
-    if(D.mode==='motion' && me.drawnAt!=null){
-      const p = pitchNow(), down = p!=null && p < -30;
-      if(down && !me.lowered){ me.lowered = true; startReload(now); }
-      if(!down && p!=null && p > 0) me.lowered = false;
+    // reload: tip the gun down (motion) or hold RELOAD (touch)
+    if(me.drawnAt!=null){
+      const p = pitchNow();
+      const tipped = D.mode==='motion' ? (p!=null && p < 32) : !!me.reloadHold;
+      updateReload(now, tipped);
     }
-    if(me.reloadUntil && now>=me.reloadUntil){ const gg = me.reloadGun; if(gg && gg.clips>0){ gg.ammo = gg.w.mag; gg.clips--; sfxRack(); } me.reloadUntil = 0; me.reloadGun = null; renderDSlots(); }
     updateReloadBtn(now);
     // thrown temporaries
     updateThrows(now);
@@ -1090,7 +1110,10 @@ function update(now, dt){
     if(!op.dead){
       if(op.state==='waiting' && now >= op.stateT) op.state='drawing';
       if(op.state==='drawing' && now >= op.readyAt) op.state='aiming';
-      if(op.state==='aiming' && now >= op.nextShot && now >= op.flinchUntil) aiShoot(now);
+      const exposed = !D.opp.cover || op.crouch < 0.3;
+      if(op.state==='aiming' && exposed && now >= op.nextShot && now >= op.flinchUntil) aiShoot(now);
+      if(op.burstLeft>0 && now >= op.burstNext && exposed){ aiBullet(now); op.burstLeft--; op.burstNext = now + 90; }
+      coverAI(now, dt);
       strafe(now, dt);
     }
     if(!D.roundOver && now - D.phaseT > 40000) finishRound(me.hp >= op.hp ? 'win':'lose', 'Time ran out', now);
@@ -1109,8 +1132,8 @@ function updateAim(now, dt){
   const headFresh = sensor.headU!=null && now - sensor.hAt < 300;
   const level = p!=null && p > 55;
   if(headFresh && level){
-    if(me.yawRef==null || me.yawSrc!=='head'){ me.yawRef = sensor.headU - me.yaw/(ppd*inv||1); me.yawSrc='head'; }
-    me.yaw = inv * (sensor.headU - me.yawRef) * ppd;
+    if(D.headRef!=null){ me.yawSrc='head'; me.aimX0 = 0; me.yaw = inv * (sensor.headU - D.headRef) * ppd; }
+    else { if(me.yawRef==null || me.yawSrc!=='head'){ me.yawRef = sensor.headU - me.yaw/(ppd*inv||1); me.yawSrc='head'; } me.yaw = inv * (sensor.headU - me.yawRef) * ppd; }
   } else if(now - sensor.rateAt < 300 && level){
     me.yawSrc = 'gyro'; me.yaw += inv * sensor.rateY * dt/1000 * ppd;
   } else if(sensor.gamma!=null && !headFresh && level){
@@ -1123,18 +1146,33 @@ function updateAim(now, dt){
   me.aimX += (tx - me.aimX) * k; me.aimY += (ty - me.aimY) * k;
 }
 
+function coverAI(now, dt){
+  const op = D.op; if(!D.opp.cover) return;
+  const tier = D.opp.stars || 1;
+  if(op.state==='aiming' || op.state==='drawing'){
+    if(op.hiding){ if(now > op.hideUntil){ op.hiding = false; op.exposeUntil = now + (3200 - tier*250) * (0.7+Math.random()*0.6); op.nextShot = Math.min(op.nextShot, now + 350); } }
+    else if(now > op.exposeUntil && op.exposeUntil){ op.hiding = true; op.hideUntil = now + (900 + Math.random()*1300); op.burstLeft = 0; }
+    else if(!op.exposeUntil) op.exposeUntil = now + 2500;
+  }
+  const target = op.hiding ? 1 : 0;
+  op.crouch += (target - op.crouch) * Math.min(1, dt/140);
+}
 function strafe(now, dt){
   const op = D.op;
+  if(D.opp.cover){
+    // stay close to cover; slide behind it when hiding
+    if(op.hiding){ op.v = 0; op.x += (op.coverX - op.x) * Math.min(1, dt/150); op.walk += dt*0.004; return; }
+  }
   if(op.state==='waiting' && D.opp.speed < 0.1) return;
-  const range = W*0.30, sp = D.opp.speed * W / 1000 * oppMod('move', now);     // px per ms
+  const range = D.opp.cover ? W*0.13 : W*0.30, sp = D.opp.speed * W / 1000 * oppMod('move', now) * (D.opp.cover ? 0.7 : 1);     // px per ms
   if(Math.abs(op.tx - op.x) < 4 || !op.moving){
     op.moving = true;
     if(Math.random() < 0.3 - (D.opp.stars||1)*0.04) op.pauseUntil = now + 200 + Math.random()*450;
-    op.tx = (Math.random()*2-1) * range;
+    op.tx = (op.coverX||0) + (Math.random()*2-1) * range;
     op.jukeAt = now + 500 + Math.random()*(1600 - (D.opp.stars||1)*220);
   }
   if(op.pauseUntil && now < op.pauseUntil){ op.v *= 0.8; return; }
-  if(op.jukeAt && now > op.jukeAt){ op.tx = (Math.random()*2-1) * range; op.jukeAt = now + 500 + Math.random()*(1600 - (D.opp.stars||1)*220); }
+  if(op.jukeAt && now > op.jukeAt){ op.tx = (op.coverX||0) + (Math.random()*2-1) * range; op.jukeAt = now + 500 + Math.random()*(1600 - (D.opp.stars||1)*220); }
   const dir = Math.sign(op.tx - op.x);
   op.v += (dir*sp - op.v) * Math.min(1, dt/120);
   op.x += op.v * dt;
@@ -1146,7 +1184,7 @@ function finishRound(res, why, now, foulFlag){
   if(D.roundOver) return;
   D.roundOver = true; D.result = res; D.phase='over';
   D.score[res==='win'?0:1]++;
-  D.rounds.push({res, why, reaction:D.me.reaction??null, shots:D.me.shots, hits:D.me.hits, foul:!!foulFlag});
+  D.rounds.push({res, why, reaction:D.me.reaction??null, shots:D.me.shots, hits:D.me.hits, foul:!!foulFlag, hpLeft: Math.max(0, D.me.hp)/100*D.myMax});
   setMsg(res==='win' ? 'You won the round' : 'You lost the round', why, 99999);
   D.nextAt = now + 2600;
 }
@@ -1157,11 +1195,11 @@ function playerFire(sx, sy){
   if(D.phase!=='draw' || D.roundOver) return;
   if(me.drawnAt==null || now < me.readyAt) return;
   if(me.burst) return;
-  if(me.reloadUntil){ sfxClick(); return; }
+  if(me.reloading){ sfxClick(); return; }
   if(G.ammo<=0){
     sfxClick();
-    if(G.clips>0){ setMsg('RELOAD', D.mode==='motion' ? 'Point your phone at the ground' : 'Tap RELOAD', 900); return; }
-    if(G.clips<=0){ const other = D.guns.some(g=>g!==G && g.ammo+g.clips>0); setMsg('Out of ammo', other ? 'Switch weapon' : (D.temp && !D.temp.used ? 'Use your temporary' : 'Nothing left to fire'), 900); }
+    if(canReload(G)){ setMsg('OUT OF LEAD', D.mode==='motion' ? 'Tip the gun down' : 'Hold RELOAD', 900); return; }
+    { const other = D.guns.some(g=>g!==G && g.ammo+g.clips+g.spare>0); setMsg('Out of ammo', other ? 'Switch weapon' : (D.temp && !D.temp.used ? 'Use your temporary' : 'Nothing left to fire'), 900); }
     return;
   }
   if(now < me.nextTurn) return;
@@ -1184,6 +1222,7 @@ function fireBullet(now){
     const a = Math.random()*Math.PI*2, r = Math.sqrt(Math.random())*w.spread*dex*(W/400);
     const px = cx + Math.cos(a)*r, py = cy + Math.sin(a)*r;
     const z = hitTest(px, py), wp = toWorld(px, py);
+    if(z==='cover'){ puff(wp.x,wp.y,'#ffd27a'); continue; }
     if(z){ total += per * ZONE_MULT[z]; if(!best || ZONE_MULT[z]>ZONE_MULT[best]) best=z; puff(wp.x,wp.y,'#a0201a'); }
     else { D.holes.push(wp); if(D.holes.length>120) D.holes.shift(); puff(wp.x,wp.y,'#8a8a8a'); }
   }
@@ -1197,26 +1236,38 @@ function fireBullet(now){
   if(b.left<=0) endBurst(now, w);
   else b.next = now + w.burstGap * (me.buff.speed ? 0.7 : 1);
 }
-function startReload(now){
+// Revolvers and tube shotguns load one round at a time; magazine guns swap a clip
+function loadsByRound(G){ return G.w.arch==='shotgun' && !/jackhammer|mag 7/i.test(G.gun.name) || /magnum|revolver|s&w|m29|derringer|blunderbuss/i.test(G.gun.name) || !G.gun.id && G.w.arch==='pistol' && false; }
+function canReload(G){ return G.ammo < G.w.mag && (G.byRound ? G.spare>0 : G.clips>0); }
+function updateReload(now, tipped){
   const me = D.me, G = curGun();
-  if(D.phase!=='draw' || D.roundOver || me.drawnAt==null || me.reloadUntil || me.burst) return;
-  if(G.ammo >= G.w.mag) return;
-  if(G.clips<=0){ setMsg('No clips left', D.guns.some(g=>g!==G && g.ammo+g.clips>0) ? 'Switch weapon' : 'Out of ammo', 900); return; }
-  me.reloadUntil = now + G.w.reload; me.reloadGun = G; me.reloadStart = now; sfxClick();
+  if(D.phase!=='draw' || D.roundOver || me.burst){ me.reloading = false; return; }
+  if(!tipped){ if(me.reloading){ me.reloading = false; me.reloadUntil = 0; } return; }
+  if(!canReload(G)){
+    if(!me.reloading && G.ammo===0 && now - (me.noAmmoMsg||0) > 1500){ me.noAmmoMsg = now; setMsg('No ammo left', D.guns.some(g=>g!==G && g.ammo+g.clips+(g.spare||0)>0) ? 'Switch weapon' : 'Use your temporary', 900); }
+    me.reloading = false; return;
+  }
+  if(!me.reloading){ me.reloading = true; me.reloadStart = now; me.reloadUntil = now + (G.byRound ? G.w.roundMs : G.w.reload); sfxClick(); }
+  if(now >= me.reloadUntil){
+    if(G.byRound){ G.ammo++; G.spare--; sfxRack(); me.reloadStart = now; me.reloadUntil = canReload(G) ? now + G.w.roundMs : 0; if(!me.reloadUntil) me.reloading = false; }
+    else { G.ammo = G.w.mag; G.clips--; sfxRack(); me.reloading = false; me.reloadUntil = 0; }
+    renderDSlots();
+  }
 }
 function updateReloadBtn(now){
   const b = $('reloadBtn'); if(!b || !D) return;
   const G = curGun(), me = D.me;
-  const need = D.phase==='draw' && me.drawnAt!=null && G.ammo < G.w.mag && G.clips>0;
-  b.style.display = (D.mode==='touch' || G.ammo===0) && need ? 'block' : 'none';
+  const need = D.mode==='touch' && D.phase==='draw' && me.drawnAt!=null && canReload(G);
+  b.style.display = need ? 'block' : 'none';
   b.classList.toggle('urgent', G.ammo===0);
-  b.textContent = me.reloadUntil ? 'RELOADING…' : (D.mode==='motion' ? 'RELOAD ↓ point phone down' : 'RELOAD');
+  b.textContent = me.reloading ? 'LOADING… (hold)' : 'HOLD TO RELOAD';
 }
 function endBurst(now, w){ const me = D.me; me.burst = null; me.nextTurn = now + w.turnGap * (me.buff.speed ? 0.7 : 1); renderDSlots(); }
 function damageOpp(total, best, now, quiet){
   const op = D.op, me = D.me;
   if(op.dead) return;
-  op.hp -= total; op.flinchUntil = now + 220; op.nextShot = Math.max(op.nextShot, now + 220 + D.oppW.rof*0.4);
+  op.hp -= total; op.flinchUntil = now + 220;
+  { const g = oppGeom(); (D.dmgNums = D.dmgNums||[]).push({x: g.x + (Math.random()-0.5)*g.h*0.25, y: g.feet - g.h*0.9 + (op.crouch||0)*175*g.u, txt: fmt(total/100*D.opp.life), t0: now, crit: best==='head'}); } op.nextShot = Math.max(op.nextShot, now + 220 + D.oppW.rof*0.4);
   if(op.state==='drawing' || op.state==='waiting') op.readyAt += 120;
   op.pauseUntil = now + 160;
   if(!quiet) sfxHit();
@@ -1283,14 +1334,19 @@ function sway(now){
 function puff(x,y,c){ for(let i=0;i<6;i++) D.particles.push({x,y,vx:(Math.random()-0.5)*0.15,vy:-Math.random()*0.15,t:0,life:400+Math.random()*300,c,r:1.5+Math.random()*2.5}); }
 
 /* ---------- AI shooting ---------- */
+// The NPC takes a "turn" every couple of seconds (quicker on harder NPCs); autos fire a short burst
 function aiShoot(now){
-  const op = D.op, ow = D.oppW, me = D.me;
-  if(op.ammo<=0){ op.ammo = ow.mag; op.nextShot = now + ow.reload; return; }
-  op.ammo--; op.lastFire = now; sfxBang(false, true);
-  const pace = (1 - ((D.opp.stars||1)-1)*0.09) * oppMod('pace', now);   // faster on harder targets, slower when debuffed
-  op.nextShot = now + (ow.rof * (1 + Math.random()*0.6) + 60) * pace;
-  let acc = D.opp.acc * oppMod('acc', now);
+  const op = D.op, ow = D.oppW;
   if(op.eff.blinded && now < op.eff.blinded.start + EFFECTS.blinded.hold){ op.nextShot = op.eff.blinded.start + EFFECTS.blinded.hold + 100; return; }
+  if(op.ammo<=0){ op.ammo = ow.mag; op.nextShot = now + ow.reload; return; }
+  const tier = D.opp.stars || 1;
+  op.burstLeft = ({smg:3, mg:5})[D.opp.weapon] || 1; op.burstNext = now;
+  op.nextShot = now + (2300 - (tier-1)*270) * (0.75 + Math.random()*0.5) * oppMod('pace', now);
+}
+function aiBullet(now){
+  const op = D.op, ow = D.oppW, me = D.me;
+  op.ammo--; op.lastFire = now; sfxBang(false, true);
+  let acc = D.opp.acc * oppMod('acc', now);
   if(now < D.me.flashUntil) acc *= 1.1;
   if(op.hp < 50) acc *= 0.85;
   if(Math.abs(op.v) > 0.05) acc *= 0.85;               // shooting on the move
@@ -1300,11 +1356,11 @@ function aiShoot(now){
     if(Math.random() < acc * (ow.pellets>1 ? 0.75 : 1)){
       const r = Math.random(); const z = r<0.12?'head':r<0.72?'torso':r<0.86?'arm':'leg';
       let m = ZONE_MULT[z]; if(z==='head' && D.armour.helmet) m *= 0.5;
-      dmg += ow.dmg * m; if(!zone || ZONE_MULT[z]>ZONE_MULT[zone]) zone=z;
+      dmg += (AI_DMG[D.opp.weapon]||20) * m; if(!zone || ZONE_MULT[z]>ZONE_MULT[zone]) zone=z;
     }
   }
   if(dmg>0){
-    dmg *= (1 - D.armour.reduce) * NPC_DMG * (me.buff.defense ? 0.7 : 1);
+    dmg *= (1 - D.armour.reduce) * (me.buff.defense ? 0.7 : 1);
     me.hp -= dmg; me.hurt = Math.min(1, me.hurt + dmg/60); D.hurtFlash = 1; D.shake = 1; buzz(80); sfxHit();
     if(me.hp<=0) finishRound('lose', zone==='head' ? `${D.opp.name} landed a headshot` : `${D.opp.name} was quicker`, now);
   }
@@ -1314,10 +1370,19 @@ function aiShoot(now){
 function oppGeom(){ const h = H*0.2, feet = H*0.615; return { x: W/2 + D.op.x, feet, h, u: h/300 }; }
 function camera(){ if(D.mode==='motion' && D.me.drawnAt!=null) return { x: D.me.aimX, y: D.me.aimY - D.me.recoil }; return {x:0,y:0}; }
 function toWorld(px,py){ const c = camera(); return { x: px + c.x, y: py + c.y }; }
+const COVER = { bin:{w:78, h:118}, dumpster:{w:230, h:150}, car:{w:250, h:140} };
+function coverRect(){
+  const t = D.opp.cover; if(!t || D.op.coverX==null) return null;
+  const g = oppGeom(), C = COVER[t];
+  const cx = W/2 + D.op.coverX;
+  return { x: cx - C.w/2*g.u, y: g.feet - C.h*g.u, w: C.w*g.u, h: C.h*g.u + g.u*4, type:t };
+}
 function hitTest(sx, sy){
   if(D.op.dead) return null;
   const p = toWorld(sx, sy), g = oppGeom();
-  const lx = (p.x - g.x)/g.u, ly = (p.y - g.feet)/g.u;
+  const cr = coverRect();
+  if(cr && p.x > cr.x && p.x < cr.x+cr.w && p.y > cr.y && p.y < cr.y+cr.h) return 'cover';
+  const lx = (p.x - g.x)/g.u, ly = (p.y - g.feet)/g.u - (D.op.crouch||0)*175;
   return figureZone(lx, ly, D.op.state==='aiming', D.opp.look.build);
 }
 
@@ -1445,7 +1510,9 @@ function render(now){
   if(pep) c.filter = 'blur(3px)';
   if(BG) c.drawImage(BG.cv, -W, -H, W*3, H*2.8);
   drawOpponent(c, now);
+  drawCover(c);
   drawEffects(c, now);
+  drawOppOverlay(c, now);
   for(const h of D.holes){ c.fillStyle='rgba(10,10,10,.7)'; c.beginPath(); c.arc(h.x, h.y, 1.8, 0, 7); c.fill(); }
   for(const p of D.particles){ c.globalAlpha = 1 - p.t/p.life; c.fillStyle=p.c; c.beginPath(); c.arc(p.x, p.y, p.r, 0, 7); c.fill(); }
   c.globalAlpha = 1;
@@ -1467,7 +1534,7 @@ function drawOpponent(c, now){
   const g = oppGeom(), op = D.op, o = D.opp;
   // shadow
   c.fillStyle='rgba(0,0,0,.4)'; c.beginPath(); c.ellipse(g.x, g.feet, g.h*0.17, g.h*0.03, 0, 0, 7); c.fill();
-  c.save(); c.translate(g.x, g.feet);
+  c.save(); c.translate(g.x, g.feet + (op.crouch||0)*175*g.u);
   if(op.dead){ const k = Math.min(1,(now-op.deadT)/700); c.rotate(-k*0.3); c.scale(1+k*0.12, 1-k*0.72); c.globalAlpha = 1 - k*0.3; }
   else { c.rotate(now < op.flinchUntil ? -0.06 : op.v*0.6); }
   let aim = 0;
@@ -1483,6 +1550,50 @@ function drawOpponent(c, now){
   }
 }
 
+function drawCover(c){
+  const r = coverRect(); if(!r) return;
+  const g = oppGeom(), u = g.u;
+  c.fillStyle='rgba(0,0,0,.35)'; c.beginPath(); c.ellipse(r.x + r.w/2, g.feet, r.w*0.55, g.h*0.03, 0, 0, 7); c.fill();
+  if(r.type==='bin'){
+    const gr = c.createLinearGradient(r.x,0,r.x+r.w,0); gr.addColorStop(0,'#5d636b'); gr.addColorStop(0.4,'#9aa1a8'); gr.addColorStop(1,'#43474d');
+    c.fillStyle = gr; c.beginPath(); c.moveTo(r.x+r.w*0.06, r.y+6*u); c.lineTo(r.x+r.w*0.94, r.y+6*u); c.lineTo(r.x+r.w*0.88, g.feet); c.lineTo(r.x+r.w*0.12, g.feet); c.closePath(); c.fill();
+    c.strokeStyle='rgba(0,0,0,.35)'; c.lineWidth=Math.max(1,2*u); for(let i=1;i<4;i++){ const y = r.y + r.h*i/4; c.beginPath(); c.moveTo(r.x+r.w*0.1,y); c.lineTo(r.x+r.w*0.9,y); c.stroke(); }
+    c.fillStyle='#6d737a'; c.beginPath(); c.ellipse(r.x+r.w/2, r.y+6*u, r.w*0.5, 7*u, 0, 0, 7); c.fill();
+  } else if(r.type==='dumpster'){
+    const gr = c.createLinearGradient(r.x,0,r.x+r.w,0); gr.addColorStop(0,'#1f4a2c'); gr.addColorStop(0.45,'#2f6b40'); gr.addColorStop(1,'#163620');
+    c.fillStyle = gr; c.fillRect(r.x, r.y+14*u, r.w, r.h-14*u);
+    c.fillStyle='#173a22'; c.beginPath(); c.moveTo(r.x-6*u, r.y+16*u); c.lineTo(r.x+r.w+6*u, r.y+16*u); c.lineTo(r.x+r.w-6*u, r.y); c.lineTo(r.x+6*u, r.y); c.closePath(); c.fill();
+    c.strokeStyle='rgba(0,0,0,.35)'; c.lineWidth=Math.max(1,3*u); for(let i=1;i<5;i++){ const x = r.x + r.w*i/5; c.beginPath(); c.moveTo(x, r.y+24*u); c.lineTo(x, g.feet-10*u); c.stroke(); }
+    c.fillStyle='#e8e8e8'; c.font=`bold ${Math.max(7, 22*u)|0}px Arial`; c.textAlign='center'; c.textBaseline='middle'; c.fillText('TORN CITY', r.x+r.w/2, r.y + r.h*0.55);
+    c.fillStyle='#111'; for(const fx of [0.12,0.88]){ c.beginPath(); c.arc(r.x+r.w*fx, g.feet-2*u, 8*u, 0, 7); c.fill(); }
+  } else if(r.type==='car'){
+    const x = r.x, y = r.y, w = r.w, h = r.h;
+    c.fillStyle='#111'; c.fillRect(x+w*0.06, g.feet-h*0.22, w*0.16, h*0.22); c.fillRect(x+w*0.78, g.feet-h*0.22, w*0.16, h*0.22);
+    const gr = c.createLinearGradient(0,y,0,g.feet); gr.addColorStop(0,'#8a1d1d'); gr.addColorStop(1,'#4a0d0d');
+    c.fillStyle = gr; c.beginPath(); c.moveTo(x+w*0.2, y); c.lineTo(x+w*0.8, y); c.lineTo(x+w*0.9, y+h*0.4); c.lineTo(x+w, y+h*0.5); c.lineTo(x+w, g.feet-h*0.12); c.lineTo(x, g.feet-h*0.12); c.lineTo(x, y+h*0.5); c.lineTo(x+w*0.1, y+h*0.4); c.closePath(); c.fill();
+    c.fillStyle='rgba(120,160,200,.55)'; c.beginPath(); c.moveTo(x+w*0.24, y+h*0.06); c.lineTo(x+w*0.76, y+h*0.06); c.lineTo(x+w*0.85, y+h*0.38); c.lineTo(x+w*0.15, y+h*0.38); c.closePath(); c.fill();
+    c.fillStyle='#222'; c.fillRect(x+w*0.3, y+h*0.6, w*0.4, h*0.14);
+    c.fillStyle='#ffe9a8'; c.beginPath(); c.ellipse(x+w*0.13, y+h*0.62, w*0.06, h*0.06, 0, 0, 7); c.ellipse(x+w*0.87, y+h*0.62, w*0.06, h*0.06, 0, 0, 7); c.fill();
+    c.fillStyle='#bbb'; c.fillRect(x+w*0.02, g.feet-h*0.18, w*0.96, h*0.06);
+  }
+}
+// floating health bar over the opponent + damage numbers (Torn-scaled)
+function drawOppOverlay(c, now){
+  const g = oppGeom(), op = D.op;
+  if(!op.dead && D.phase==='draw'){
+    const bw = g.h*0.42, bx = g.x - bw/2, by = g.feet - g.h*1.1 + (op.crouch||0)*175*g.u;
+    c.fillStyle='rgba(0,0,0,.6)'; c.fillRect(bx-1, by-1, bw+2, 7);
+    c.fillStyle = op.hp > 50 ? '#85b200' : op.hp > 25 ? '#d9a62b' : '#e0402a'; c.fillRect(bx, by, bw*clamp(op.hp/100,0,1), 5);
+  }
+  D.dmgNums = (D.dmgNums||[]).filter(d=> now - d.t0 < 900);
+  for(const d of D.dmgNums){
+    const k = (now - d.t0)/900;
+    c.globalAlpha = 1 - k; c.font = `bold ${Math.max(12, g.h*0.075)|0}px Arial`; c.textAlign='center'; c.textBaseline='middle';
+    c.lineWidth = 3; c.strokeStyle='rgba(0,0,0,.8)'; c.strokeText(d.txt, d.x, d.y - k*g.h*0.3);
+    c.fillStyle = d.crit ? '#ffd23b' : '#ff5a3a'; c.fillText(d.txt, d.x, d.y - k*g.h*0.3);
+  }
+  c.globalAlpha = 1;
+}
 function drawEffects(c, now){
   const g = oppGeom(), op = D.op;
   // thrown items in flight
@@ -1542,14 +1653,43 @@ function flames(c, x, y, r, a, now){
   }
 }
 
+function drawReloadView(c, now){
+  const me = D.me, G = curGun(), w = G.w;
+  const cx = W*0.5, cy = H*0.74, R = Math.min(W*0.3, H*0.17);
+  c.save(); c.fillStyle='rgba(0,0,0,.25)'; c.fillRect(0, H*0.55, W, H*0.45); c.restore();
+  if(G.byRound){
+    const n = Math.min(w.mag, 8);
+    c.fillStyle='#55595f'; c.beginPath(); c.arc(cx, cy, R, 0, 7); c.fill();
+    c.strokeStyle='#2a2c30'; c.lineWidth=4; c.stroke();
+    for(let i=0;i<n;i++){
+      const a = -Math.PI/2 + i*2*Math.PI/n, x = cx + Math.cos(a)*R*0.58, y = cy + Math.sin(a)*R*0.58;
+      c.fillStyle='#1c1d20'; c.beginPath(); c.arc(x,y,R*0.22,0,7); c.fill();
+      if(i < G.ammo){ c.fillStyle='#d9b54a'; c.beginPath(); c.arc(x,y,R*0.17,0,7); c.fill(); c.fillStyle='#8a6d20'; c.beginPath(); c.arc(x,y,R*0.07,0,7); c.fill(); }
+      if(i === G.ammo && me.reloading){ c.strokeStyle='#ffd23b'; c.lineWidth=3; c.beginPath(); c.arc(x,y,R*0.25,0,7); c.stroke(); }
+    }
+    c.fillStyle='#2a2c30'; c.beginPath(); c.arc(cx,cy,R*0.12,0,7); c.fill();
+  } else {
+    const mw = R*0.6, mh = R*1.6, x = cx - mw/2, y = cy - mh/2;
+    c.fillStyle='#2c2e33'; c.fillRect(x, y, mw, mh); c.strokeStyle='#111'; c.lineWidth=3; c.strokeRect(x, y, mw, mh);
+    const k = me.reloading && me.reloadUntil ? clamp((now - me.reloadStart)/(me.reloadUntil - me.reloadStart),0,1) : (G.ammo/w.mag);
+    c.fillStyle='#d9b54a'; const rows = 10;
+    for(let i=0;i<rows;i++){ if(i/rows < k) c.fillRect(x+mw*0.15, y+mh - (i+1)*mh/rows + 2, mw*0.7, mh/rows - 4); }
+    c.fillStyle='#fff'; c.font=`bold ${Math.max(13,H*0.02)|0}px Arial`; c.textAlign='center';
+    c.fillText(me.reloading ? 'SWAPPING CLIP…' : (canReload(G) ? '' : 'NO CLIPS LEFT'), cx, y - 14);
+  }
+  c.fillStyle='#fff'; c.font=`bold ${Math.max(14,H*0.022)|0}px Arial`; c.textAlign='center'; c.textBaseline='middle';
+  c.fillText(`${ammoText(G)}`, cx, cy + R + 22);
+  if(D.mode==='motion') { c.font=`${Math.max(12,H*0.018)|0}px Arial`; c.fillStyle='rgba(255,255,255,.8)'; c.fillText('Raise the gun to keep shooting', cx, cy + R + 44); }
+}
+
 function drawPlayerView(c, now){
   const me = D.me, G = curGun(), w = G.w;
   if(D.phase!=='draw' || me.drawnAt==null) return;
   const sw = sway(now);
   const since = now - Math.max(me.drawnAt, me.switchAt||0);
   const k = clamp(since / w.draw, 0, 1), e = 1 - Math.pow(1-k,3);
+  if(me.reloading || (D.mode==='motion' && (pitchNow()??90) < 32)){ drawReloadView(c, now); return; }
   let kick = me.recoil;
-  if(me.reloadUntil){ const t = clamp((now - me.reloadStart)/(me.reloadUntil - me.reloadStart), 0, 1); kick += Math.sin(t*Math.PI) * H*0.25; }
   const gw = Math.min(W*0.62, H*0.42), gh = gw*0.5;
   const gx = W*0.66 + sw.x*0.4, gy = H - gh*0.45 + H*0.3*(1-e) + kick*0.7 + sw.y*0.4;
   c.save(); c.translate(gx, gy); c.rotate(0.32 + kick/300); c.scale(-1,1);
@@ -1585,7 +1725,7 @@ function drawHUD(c, now){
     for(const k in D.me.buff){ const t = bl[k], tw = c.measureText(t).width + 12; c.fillStyle='rgba(60,110,20,.9)'; c.fillRect(x, y-9, tw, 18); c.fillStyle='#fff'; c.fillText(t, x+6, y); x += tw + 4; }
   }
   // NPC portrait card before the draw
-  if((D.phase==='holster' || D.phase==='steady') && D.oppCard && D.oppCard.complete && D.oppCard.naturalWidth){
+  if((D.phase==='holster' || D.phase==='steady' || D.phase==='ready') && D.oppCard && D.oppCard.complete && D.oppCard.naturalWidth){
     const cw = Math.min(W*0.24, 110), ch = cw*1.375;
     c.save(); c.shadowColor='rgba(0,0,0,.6)'; c.shadowBlur=10; c.drawImage(D.oppCard, W - cw - 10, top + 84, cw, ch); c.restore();
     c.strokeStyle='rgba(0,0,0,.8)'; c.lineWidth=1; c.strokeRect(W - cw - 10 + .5, top + 84 + .5, cw-1, ch-1);
@@ -1600,8 +1740,7 @@ function drawHUD(c, now){
   }
   // reload / switching
   const me = D.me, G = curGun();
-  if(D.phase==='draw' && me.reloadUntil){ centerTag(c, 'RELOADING', H*0.62, '#ffd23b'); }
-  else if(D.phase==='draw' && me.drawnAt!=null && G.ammo===0 && G.clips>0){ centerTag(c, D.mode==='motion' ? 'RELOAD — point phone down' : 'RELOAD', H*0.62, '#ff6a4a'); }
+  if(D.phase==='draw' && me.drawnAt!=null && !me.reloading && G.ammo===0 && canReload(G)){ centerTag(c, D.mode==='motion' ? 'OUT OF LEAD — TIP THE GUN DOWN' : 'OUT OF LEAD — HOLD RELOAD', H*0.4, '#ff6a4a'); }
   else if(D.phase==='draw' && me.drawnAt!=null && now < me.readyAt && me.switchAt){ centerTag(c, 'SWITCHING', H*0.62, '#ddd'); }
   // messages (Torn attack-screen style box)
   if(now < D.msgT && D.msg){
@@ -1619,17 +1758,28 @@ function drawHUD(c, now){
     c.fillText(D.msg.toUpperCase(), W/2, y);
     if(D.msgSub){ c.font=`bold ${subFs|0}px Arial`; c.fillStyle='#eee'; c.fillText(D.msgSub, W/2, y + fs*0.55 + subFs*0.7); }
   }
+  if(D.phase==='ready'){
+    c.textAlign='center'; c.textBaseline='alphabetic'; c.font=`bold ${Math.max(13,H*0.02)|0}px Arial`; c.fillStyle='#fff';
+    c.font=`${Math.max(11,H*0.015)|0}px Arial`; c.fillStyle='rgba(255,255,255,.8)'; c.fillText('Tapping READY calibrates your motion controls', W/2, H*0.85);
+  }
   if(D.phase==='holster' || D.phase==='steady'){
     const ok = isHolstered();
     c.textAlign='center'; c.textBaseline='alphabetic'; c.font=`bold ${Math.max(13,H*0.02)|0}px Arial`;
     c.fillStyle = ok ? '#85b200' : '#ffb35a';
-    const t = D.mode==='motion' ? (ok ? '● Holstered — stay still' : '○ Point the phone at the ground') : (ok ? '● Holding — wait for it' : '○ Hold a finger on the screen');
+    const t = D.mode==='motion' ? (ok ? 'HOLSTERED — wait for the bell' : 'HOLSTER — hold your phone flat') : (ok ? '● Holding — wait for it' : '○ Hold a finger on the screen');
     c.fillText(t, W/2, H*0.74);
+    if(D.mode==='motion'){
+      const p = pitchNow() ?? 90, flat = clamp(1 - Math.abs(p)/70, 0, 1);
+      const bw = Math.min(W*0.7, 300), bx = W/2 - bw/2, by = H*0.77;
+      const gr = c.createLinearGradient(bx,0,bx+bw,0); gr.addColorStop(0,'#c0392b'); gr.addColorStop(0.62,'#c0392b'); gr.addColorStop(0.66,'#5e9b2a'); gr.addColorStop(1,'#5e9b2a');
+      c.fillStyle = gr; roundRect(c, bx, by, bw, 12, 6); c.fill();
+      c.fillStyle='#fff'; c.strokeStyle='#2a6a1a'; c.lineWidth=3; c.beginPath(); c.arc(bx + bw*flat, by+6, 9, 0, 7); c.fill(); c.stroke();
+    }
     if(D.mode==='motion'){
       const p = pitchNow();
       c.font=`${Math.max(11,H*0.015)|0}px Arial`; c.fillStyle='rgba(255,255,255,.75)';
       const turn = sensor.heading!=null ? ` · Turn ${Math.round((sensor.heading+360)%360)}°` : (now - sensor.rateAt < 500 ? ' · Gyro ok' : ' · No turn sensor');
-      c.fillText(p==null ? 'No tilt reading from your phone' : `Tilt ${Math.round(p)}° (needs below -35°)${turn}`, W/2, H*0.74 + Math.max(17,H*0.026));
+      c.fillText(p==null ? 'No tilt reading from your phone' : `Tilt ${Math.round(p)}°${turn}`, W/2, H*0.77 + 34);
     }
   }
   if(D.phase==='draw' && me.drawnAt!=null && now < me.drawnAt + 1200){ centerTag(c, `Draw: ${me.reaction}ms`, H*0.44, '#ffd23b'); }
@@ -1681,8 +1831,10 @@ function showResults(d){
   $('rTitle').textContent = won ? 'You won' : 'You lost';
   $('rTitle').className = 'big ' + (won ? 'win' : 'lose');
   $('rSub').textContent = `${d.score[0]} – ${d.score[1]} vs ${d.opp.name}`;
-  $('rTable').innerHTML = `<tr><th>Rd</th><th>Result</th><th>Draw</th><th>Hits</th></tr>` +
-    d.rounds.map((r,i)=>`<tr><td>${i+1}</td><td>${r.res==='win'?'✔ Won':'✖ Lost'}<div class="note">${esc(r.why)}</div></td><td>${r.reaction!=null?r.reaction+'ms':'—'}</td><td>${r.hits}/${r.shots}</td></tr>`).join('');
+  const sh = d.rounds.reduce((a,r)=>a+r.shots,0), hi = d.rounds.reduce((a,r)=>a+r.hits,0);
+  const bestDraw = reacts.length ? (Math.min(...reacts)/1000).toFixed(2)+'s' : '—';
+  $('rTable').innerHTML = `<tr><td>Best draw time</td><td><b>${bestDraw}</b></td></tr><tr><td>Accuracy</td><td><b>${sh?Math.round(hi/sh*100):0}%</b> (${hi}/${sh})</td></tr><tr><td>Health left</td><td><b>${fmt(d.rounds[d.rounds.length-1].hpLeft)}</b> / ${fmt(d.myMax)}</td></tr>`
+    + `<tr><th>Rd</th><th>Result</th></tr>` + d.rounds.map((r,i)=>`<tr><td>${i+1}</td><td>${r.res==='win'?'✔ Won':'✖ Lost'} · ${r.reaction!=null?(r.reaction/1000).toFixed(2)+'s draw':'no draw'} · ${r.hits}/${r.shots} hits<div class="note">${esc(r.why)}</div></td></tr>`).join('');
   show('s-result');
 }
 

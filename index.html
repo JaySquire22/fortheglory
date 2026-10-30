@@ -408,9 +408,13 @@ function roleOf(item){
   if(s) return 'armour';
   return archOf(item) ? 'secondary' : 'armour';
 }
+// Weapons taken out of the game
+const BANNED = /^(bolas|book|brick|claymore( mine)?|fireworks?|glitter bomb|nail bomb|ninja stars?|party popper|semtex|snowballs?|stygian darkness|trout|wrench|flare gun|flame ?throwers?|harpoon|homemade pocket shotgun|pocket shotgun|lorcin 380|pink mac-?10|prototype|slingshot|tranquili[sz]er gun|taser|egg propelled launcher|gold plated ak-?47|neutrilux 2000|nock gun|rheinmetall? mg ?3|sig 550|snow cannon)$/i;
+function isBanned(name){ const n = String(name||'').trim(); return BANNED.test(n) || /^dual\s/i.test(n); }
 function buildLoadout(equip){
   const out = {primary:null, secondary:null, melee:null, temporary:null, armour:[]};
   for(const it of equip||[]){
+    if(isBanned(it.name)) continue;
     const role = roleOf(it);
     if(role==='primary' || role==='secondary'){
       const a = archOf(it) || (role==='primary' ? 'rifle' : 'pistol');
@@ -439,9 +443,10 @@ function weaponStats(gun){
   w.turnGap = 300;
   // recoil: vertical kick + sideways jitter per round (px at 400px wide), and how fast the gun settles (fraction left after 1s)
   const kickScale = clamp(dmg/60, 0.8, 1.4);
-  w.kick = ({pistol:16, smg:6.5, rifle:11, shotgun:36, mg:5.5, heavy:60})[arch] * kickScale * (/desert eagle|magnum|m29|s&w/i.test(gun.name||'') ? 1.5 : 1);
-  w.kickX = ({pistol:4, smg:6, rifle:3.5, shotgun:9, mg:8, heavy:10})[arch];
-  w.settle = ({pistol:0.002, smg:0.03, rifle:0.006, shotgun:0.004, mg:0.06, heavy:0.004})[arch];
+  w.kick = ({pistol:42, smg:17, rifle:30, shotgun:85, mg:15, heavy:130})[arch] * kickScale * (/desert eagle|magnum|m29|s&w/i.test(gun.name||'') ? 1.5 : 1);
+  w.kickX = ({pistol:11, smg:15, rifle:9, shotgun:22, mg:19, heavy:24})[arch];
+  w.settle = ({pistol:0.03, smg:0.1, rifle:0.05, shotgun:0.04, mg:0.15, heavy:0.04})[arch];
+  w.heat = ({pistol:0.45, smg:0.18, rifle:0.3, shotgun:0.8, mg:0.14, heavy:1})[arch];   // how much each round shakes your aim
   w.scope = arch==='rifle' || /sniper|barrett|sl8|psg|dsr|m82|svd|scope|aug|sa-80|enfield/i.test(gun.name||'');
   w.roundMs = arch==='shotgun' ? 380 : 300;
   return w;
@@ -911,7 +916,7 @@ $('btnRefresh').onclick = async ()=>{
 
 let loadout = buildLoadout([]);
 let myLook = lookFromArmour([]);
-function currentTemp(){ return (store.armoury && store.armoury.temporary) || loadout.temporary || store.tempPick || null; }
+function currentTemp(){ const t = (store.armoury && store.armoury.temporary) || loadout.temporary || store.tempPick || null; return t && !isBanned(t.name) ? t : null; }
 // ---------- Armoury: every Torn primary / secondary / temporary; your picks replace your Torn loadout ----------
 let armTab = 'primary', tornCatalogue = null;
 function titleCase(n){ return n.replace(/\b([a-z])/g, m=>m.toUpperCase()).replace(/\bAk/g,'AK').replace(/\bMp/g,'MP').replace(/\bBt\b/g,'BT').replace(/\bUsp\b/g,'USP').replace(/\bSl8/g,'SL8').replace(/\bSa-80/g,'SA-80').replace(/\bNg-5/g,'NG-5').replace(/\bCr-21/g,'CR-21').replace(/\bM-15a4/g,'M-15A4'); }
@@ -939,6 +944,7 @@ async function loadCatalogue(){
 function armouryGun(pick, role){ if(!pick) return null; const it = {id: pick.id, name: pick.name, sub: pick.wt}; return Object.assign({role, arch: archOf(it) || (role==='primary' ? 'rifle' : 'pistol'), armoury:true}, it); }
 function applyArmoury(lo){
   const A = store.armoury || {};
+  for(const k of ['primary','secondary','temporary']) if(A[k] && isBanned(A[k].name)) delete A[k];
   if(A.primary) lo.primary = armouryGun(A.primary, 'primary');
   if(A.secondary) lo.secondary = armouryGun(A.secondary, 'secondary');
   lo.guns = [lo.primary, lo.secondary].filter(Boolean);
@@ -953,7 +959,7 @@ async function renderArmoury(){
   const box = $('armList'); if(!tornCatalogue) box.innerHTML = '<div class="note" style="padding:8px">Loading Torn items…</div>';
   const cat = await loadCatalogue();
   const q = ($('armSearch').value||'').toLowerCase();
-  const list = (cat[armTab]||[]).filter(i=> !q || i.name.toLowerCase().includes(q));
+  const list = (cat[armTab]||[]).filter(i=> !isBanned(i.name) && (!q || i.name.toLowerCase().includes(q)));
   box.innerHTML = list.map(i=>{
     const sel = A[armTab] && A[armTab].name===i.name;
     let sub = '';
@@ -1227,14 +1233,16 @@ $('quit').onclick = ()=> endMatch(true);
 $('reloadBtn').onpointerdown = e=>{ e.stopPropagation(); e.preventDefault(); if(D) D.me.reloadHold = true; };
 ['pointerup','pointercancel','pointerleave'].forEach(ev=> $('reloadBtn').addEventListener(ev, ()=>{ if(D) D.me.reloadHold = false; }));
 $('readyBtn').onpointerdown = e=>{ e.stopPropagation(); e.preventDefault(); calibrate(); };
-$('scopeBtn').onpointerdown = e=>{ e.stopPropagation(); e.preventDefault(); if(!D) return; D.me.scoped = !D.me.scoped; sfxClick(); updateScopeBtn(); };
+// hold to aim down the scope; let go and you're back to normal
+$('scopeBtn').onpointerdown = e=>{ e.stopPropagation(); e.preventDefault(); if(!D) return; try{ $('scopeBtn').setPointerCapture(e.pointerId); }catch(_){} D.me.scoped = true; sfxClick(); updateScopeBtn(); };
+['pointerup','pointercancel','lostpointercapture'].forEach(ev=> $('scopeBtn').addEventListener(ev, ()=>{ if(D && D.me){ D.me.scoped = false; updateScopeBtn(); } }));
 function updateScopeBtn(){
   const b = $('scopeBtn'); if(!b || !D) return;
   const me = D.me, G = curGun();
   const tipped = D.mode==='motion' && (pitchNow() ?? 90) < 32;
   const can = D.phase==='draw' && me.drawnAt!=null && G.w.scope && !me.reloading && !D.roundOver && !tipped;
   if(!can && me.scoped) me.scoped = false;
-  b.style.display = can ? 'block' : 'none'; b.classList.toggle('on', !!me.scoped); b.textContent = me.scoped ? '◎ STOP AIMING' : '◎ AIM';
+  b.style.display = can ? 'block' : 'none'; b.classList.toggle('on', !!me.scoped); b.textContent = me.scoped ? '◎ AIMING' : '◎ HOLD TO AIM';
 }
 $('recentreBtn').onpointerdown = e=>{ e.stopPropagation(); e.preventDefault(); recentre(); };
 // Re-centre: whatever way the phone points now becomes straight ahead (and, if raised, your aim height)
@@ -1381,6 +1389,7 @@ function update(now, dt){
       me.aimX = me.aimX0; me.yaw = 0; me.yawRef = null;
     }
     if(D.mode==='motion' && me.drawnAt!=null) updateAim(now, dt);
+    me.heat = Math.max(0, (me.heat||0) - dt/1000 * 1.6 * Math.sqrt(D.myMods.dex));
     { const gw = curGun().w, settle = Math.pow(gw.settle, Math.sqrt(D.myMods.dex)); me.recoil *= Math.pow(settle, dt/1000); me.recoilX = (me.recoilX||0) * Math.pow(settle, dt/1000); }
     me.hurt = Math.max(0, me.hurt - dt/2500);
     // bursts (one tap = one Torn turn)
@@ -1405,7 +1414,7 @@ function update(now, dt){
     if(!op.dead){
       if(op.state==='waiting' && now >= op.stateT) op.state='drawing';
       if(op.state==='drawing' && now >= op.readyAt) op.state='aiming';
-      const exposed = op.crouch < 0.3 && (op.mode==='hold' || Math.abs(op.v) < aiSpeeds().walk*0.35);
+      const exposed = op.crouch < 0.3 && (op.mode==='hold' || !op.running);     // they also fire while walking
       if(op.state==='aiming' && exposed && now >= op.nextShot && now >= op.flinchUntil) aiShoot(now);
       if(op.burstLeft>0 && now >= op.burstNext && exposed){ aiBullet(now); op.burstLeft--; op.burstNext = now + 90; }
       coverAI(now, dt);
@@ -1465,7 +1474,9 @@ function aiPick(now){
     return;
   }
   // open ground: sidestep or dash to a new spot
-  const dist = (0.15 + Math.random()*0.55) * range * (Math.random()<0.5?-1:1);
+  // favour big moves across the street, heading away from the edge they're near
+  const dir = Math.abs(op.x) > range*0.5 ? -Math.sign(op.x) : (Math.random()<0.5?-1:1);
+  const dist = (0.35 + Math.random()*0.75) * range * dir;
   op.tx = clamp(op.x + dist, -range, range); op.running = Math.abs(op.tx - op.x) > W*0.3 || Math.random() < 0.15*tier; op.mode = 'move'; op.next = 'hold';
 }
 function coverAI(now, dt){}
@@ -1487,8 +1498,8 @@ function strafe(now, dt){
     want = Math.sign(dx) * Math.min(top, Math.abs(dx) / 140);
     if(Math.abs(dx) < 3 && Math.abs(op.v) < sp.walk*0.25){
       op.v = 0; op.mode = op.next || 'hold';
-      if(op.mode==='hide') op.until = now + 650 + Math.random()*1100;
-      else { op.until = now + (1000 + Math.random()*1100) * (1.15 - tier*0.06); op.kneeling = Math.random() < 0.25 * D.opMods.dex * (0.6 + tier*0.15); if(op.kneeling) op.kneelUntil = now + 500 + Math.random()*900; }
+      if(op.mode==='hide') op.until = now + 450 + Math.random()*550;          // max ~1s behind cover
+      else { op.until = now + Math.min(1000, (350 + Math.random()*650) * (1.15 - tier*0.06));   /* max 1s planted */ op.kneeling = Math.random() < 0.25 * D.opMods.dex * (0.6 + tier*0.15); if(op.kneeling) op.kneelUntil = now + 500 + Math.random()*900; }
     }
   } else if(op.mode==='hold'){
     if(op.kneeling && now > op.kneelUntil) op.kneeling = false;
@@ -1540,6 +1551,7 @@ function fireBullet(now){
   // kick: autos climb and wander as the burst goes on; dexterity helps you control it
   const ctl = 1/Math.sqrt(D.myMods.dex) * (me.buff.dexterity ? 0.8 : 1), sc = W/400;
   me.recoil += w.kick * sc * ctl;
+  me.heat = Math.min(3, (me.heat||0) + w.heat * ctl);
   me.recoilX = (me.recoilX||0) + (Math.random()-0.45) * 2 * w.kickX * sc * ctl;
   const per = (w.pellets>1 ? w.bullet*1.6/w.pellets : w.bullet) * (me.buff.strength ? 1.3 : 1) * D.myMods.str / D.opMods.def;
   let total = 0, best = null;
@@ -1660,9 +1672,11 @@ function sway(now){
   if(me.buff.dexterity) A *= 0.55;
   A /= Math.sqrt(D.myMods.dex);
   if(me.scoped) A *= 0.6;
+  A *= 1 + (me.heat||0) * 2.2;                     // aim gets shaky while you're firing
   if(now < me.pepperUntil) A *= 3.2;
   if(now < me.flashUntil) A *= 1.8;
-  return { x: (Math.sin(t*1.7)+0.5*Math.sin(t*4.3+1))*A, y: (Math.cos(t*1.3)+0.5*Math.sin(t*3.7))*A };
+  const hf = 1 + (me.heat||0)*1.5;
+  return { x: (Math.sin(t*1.7*hf)+0.5*Math.sin(t*4.3*hf+1))*A, y: (Math.cos(t*1.3*hf)+0.5*Math.sin(t*3.7*hf))*A };
 }
 function puff(x,y,c){ for(let i=0;i<6;i++) D.particles.push({x,y,vx:(Math.random()-0.5)*0.15,vy:-Math.random()*0.15,t:0,life:400+Math.random()*300,c,r:1.5+Math.random()*2.5}); }
 
@@ -1705,7 +1719,7 @@ const FIGHT_DIST = 0.65;   // "Far" — the distance that plays best
 function oppGeom(){ const d = FIGHT_DIST; const h = H*(0.26 - 0.15*d), feet = H*(0.72 - 0.12*d); return { x: W/2 + D.op.x, feet, h, u: h/300 }; }
 function camera(){ if(D.mode==='motion' && D.me.drawnAt!=null) return { x: D.me.aimX + (D.me.recoilX||0), y: D.me.aimY - D.me.recoil }; return {x:0,y:0}; }
 function zoomNow(){ return D && D.me && D.me.scoped ? SCOPE_ZOOM : 1; }
-const SCOPE_ZOOM = 1/0.9;   // looking through a scope brings the opponent 10% closer
+const SCOPE_ZOOM = 1.25;    // looking through a scope magnifies 25%
 function toWorld(px,py){ const c = camera(), z = zoomNow(); return { x: W/2 + (px - W/2)/z + c.x, y: H/2 + (py - H/2)/z + c.y }; }
 // Real-world proportions: a person is 300 units (~1.8 m), so 1 unit ≈ 6 mm
 const COVER = {

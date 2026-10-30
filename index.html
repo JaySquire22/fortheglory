@@ -171,6 +171,10 @@ details summary{cursor:pointer;color:#7aa7d8;font-size:13px;margin-top:10px}
 
         <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="invX" style="width:auto"> Flip left/right aiming</label>
       </div>
+      <label>Opponent distance (testing difficulty)</label>
+      <div class="seg" id="distSeg">
+        <button data-d="0">Close</button><button data-d="0.35">Medium</button><button data-d="0.65">Far</button><button data-d="1">Very far</button>
+      </div>
     </div></div>
 
     <button class="go" id="btnDuel">⚔ Attack</button>
@@ -838,6 +842,15 @@ function npcThumb(o){
   c.save(); c.translate(22, 150); c.scale(0.42,0.42); drawFigure(c, o.look, {}); c.restore();
   return cv;
 }
+// Test dummy: you, built from your own loadout and stats
+function selfNpc(){
+  const p = store.player || {}, gun = currentGun();
+  const o = { id:'self', name: p.name || 'You', title:'You (test dummy)', card: p.image || null, weapon: gun.arch || 'pistol',
+    react:600, acc:0.45, life: p.life || 1000, speed:0.16, stars:3, bstats: store.bstats || null, look: myLook, cover:null,
+    temp: (()=>{ const t = tempInfo(currentTemp()); if(!t) return null; return t.effect==='blinded' ? 'flash' : t.effect==='burning' ? 'molotov' : t.effect==='peppered' ? 'pepper' : t.kind==='blast' ? 'heg' : null; })() };
+  if(selectedOpp && selectedOpp.id==='self') selectedOpp = o;
+  return o;
+}
 function renderOpps(){
   const beaten = store.stats.beaten || {};
   const box = $('opps'); box.innerHTML = '';
@@ -854,9 +867,11 @@ function renderOpps(){
     lv.innerHTML = `<b>${'★'.repeat(o.stars)}${'☆'.repeat(5-o.stars)}</b>❤ ${fmt(o.life)}`;
     d.appendChild(lv);
     if(!isGhost) d.onclick = ()=>{ ghostOpp = null; selectedOpp = o; renderOpps(); };
+    if(o.id==='self' && !o.card){ d.replaceChild(npcThumb(o), d.firstChild); }
     box.appendChild(d);
   };
   if(ghostOpp) add(ghostOpp, false, true, true);
+  { const me = selfNpc(); add(me, false, !ghostOpp && selectedOpp.id==='self', false); }
   NPCS.forEach((o,i)=> add(o, i>0 && !beaten[NPCS[i-1].id], !ghostOpp && selectedOpp.id===o.id, false));
 }
 const GHOST_LOOKS = [
@@ -887,6 +902,8 @@ function renderSettings(){
   const s = store.settings;
   document.querySelectorAll('#modeSeg button').forEach(b=>{ b.classList.toggle('on', b.dataset.mode===s.mode); b.onclick=()=>{ s.mode=b.dataset.mode; save(); renderSettings(); }; });
 
+  if(s.dist==null) s.dist = 0.65;
+  document.querySelectorAll('#distSeg button').forEach(b=>{ b.classList.toggle('on', Math.abs(Number(b.dataset.d) - s.dist) < 0.01); b.onclick=()=>{ s.dist=Number(b.dataset.d); save(); renderSettings(); }; });
   $('sens').value = s.sens; $('sens').oninput = e=>{ s.sens=parseFloat(e.target.value); save(); };
   $('invX').checked = !!s.invX; $('invX').onchange = e=>{ s.invX=e.target.checked; save(); };
   $('motionOpts').style.display = s.mode==='motion' ? '' : 'none';
@@ -948,8 +965,9 @@ function onOrient(e){
 function onMotion(e){
   const r=e.rotationRate;
   if(r && (r.alpha!=null || r.beta!=null || r.gamma!=null)){
-    // device-frame angular velocity in deg/s: x = beta, y = gamma, z = alpha
-    sensor.rx = r.beta||0; sensor.ry = r.gamma||0; sensor.rz = r.alpha||0; sensor.rateY = sensor.ry; sensor.rateAt = performance.now();
+    // device-frame angular velocity in deg/s. NOTE: browsers (Chrome/Samsung on Android, Safari on iOS) actually report
+    // alpha = around X, beta = around Y, gamma = around Z — not the order the spec describes.
+    sensor.rx = r.alpha||0; sensor.ry = r.beta||0; sensor.rz = r.gamma||0; sensor.rateY = sensor.ry; sensor.rateAt = performance.now();
   }
   const g=e.accelerationIncludingGravity;
   if(g && g.y!=null){
@@ -1115,7 +1133,7 @@ function calibrate(){
 
 function loop(now){
   if(!D) return;
-  const dt = Math.min(50, now - (D.last||now)); D.last = now;
+  const dt = Math.min(50, now - (D.last||now)); D.last = now; D.dtLast = dt;
   update(now, dt);
   if(!D) return;
   render(now);
@@ -1447,7 +1465,8 @@ function aiBullet(now){
 }
 
 /* ---------- geometry ---------- */
-function oppGeom(){ const h = H*0.135, feet = H*0.585; return { x: W/2 + D.op.x, feet, h, u: h/300 }; }
+// distance setting 0 (close) … 1 (very far)
+function oppGeom(){ const d = clamp(store.settings.dist ?? 0.55, 0, 1); const h = H*(0.26 - 0.15*d), feet = H*(0.72 - 0.12*d); return { x: W/2 + D.op.x, feet, h, u: h/300 }; }
 function camera(){ if(D.mode==='motion' && D.me.drawnAt!=null) return { x: D.me.aimX, y: D.me.aimY - D.me.recoil }; return {x:0,y:0}; }
 function toWorld(px,py){ const c = camera(); return { x: px + c.x, y: py + c.y }; }
 const COVER = { bin:{w:130, h:155}, dumpster:{w:240, h:160}, car:{w:260, h:150} };
@@ -1473,109 +1492,92 @@ function hitTest(sx, sy){
    world x: -W..2W, y: -H..1.8H
    ========================================================= */
 function buildBackground(){
+  // A wide Torn City street seen front-on: a full row of shopfronts across the whole play area,
+  // with the road in front so opponents can move all the way left and right.
   const bs = Math.min(1.25, DPR);
   const BW = W*3, BH = H*2.8;
   const cv2 = document.createElement('canvas'); cv2.width = BW*bs; cv2.height = BH*bs;
   const c = cv2.getContext('2d'); c.scale(bs,bs); c.translate(W, H);
   let seed = 42; const rnd = ()=> (seed = (seed*9301+49297)%233280)/233280;
-  const hz = H*0.5, X0=-W, X1=2*W, Y0=-H, Y1=1.8*H;
+  const X0=-W, X1=2*W, Y0=-H, Y1=1.8*H;
+  const d = clamp(store.settings.dist ?? 0.65, 0, 1);
+  const kerb = H*(0.62 - 0.12*d);                  // back pavement edge (just behind where opponents stand)
+  const facadeBase = kerb - H*0.035;               // where the buildings meet the pavement
+  const sc = 1.35 - 0.55*d;                        // scenery scale follows the distance setting
   // sky
-  const sky = c.createLinearGradient(0,Y0,0,hz);
-  sky.addColorStop(0,'#05070d'); sky.addColorStop(0.55,'#1b2238'); sky.addColorStop(0.85,'#4a3550'); sky.addColorStop(1,'#8a4f4a');
-  c.fillStyle = sky; c.fillRect(X0,Y0,X1-X0,hz-Y0);
-  for(let i=0;i<120;i++){ c.fillStyle=`rgba(255,255,255,${0.2+rnd()*0.5})`; c.fillRect(X0+rnd()*(X1-X0), Y0+rnd()*(hz-Y0)*0.6, 1.2, 1.2); }
-  // far skyline
-  for(let layer=0; layer<2; layer++){
-    let x = X0;
-    while(x < X1){
-      const bw = W*(0.05+rnd()*0.09), bh = H*(layer? 0.06+rnd()*0.16 : 0.1+rnd()*0.28);
-      c.fillStyle = layer ? '#151826' : '#0e1019';
-      c.fillRect(x, hz-bh, bw+1, bh);
-      if(!layer && rnd()<0.2){ c.fillRect(x+bw*0.45, hz-bh-H*0.04, 2, H*0.04); c.fillStyle='#ff3030'; c.fillRect(x+bw*0.45-1, hz-bh-H*0.04, 4, 3); }
-      for(let wy = hz-bh+5; wy < hz-4; wy += 7) for(let wx = x+3; wx < x+bw-3; wx += 6)
-        if(rnd() < (layer?0.12:0.22)){ c.fillStyle = rnd()<0.8 ? 'rgba(255,214,130,.55)' : 'rgba(150,200,255,.5)'; c.fillRect(wx, wy, 2.5, 3); }
-      x += bw;
-    }
-  }
-  // ground & road
-  const vpx = W/2;
-  c.fillStyle='#22242a'; c.fillRect(X0,hz,X1-X0,Y1-hz);
-  const road = d => W*0.015 + W*1.05*d;        // half width at depth d (0 at horizon, 1 near bottom)
-  const yAt = d => hz + H*0.5*d;
-  const walk = d => W*0.012 + W*0.75*d;        // sidewalk width
-  const dFar = 0, dNear = (Y1-hz)/(H*0.5);
-  // sidewalks
-  for(const side of [-1,1]){
-    c.fillStyle='#3a3c42'; c.beginPath();
-    c.moveTo(vpx+side*road(dFar), yAt(dFar)); c.lineTo(vpx+side*(road(dFar)+walk(dFar)), yAt(dFar));
-    c.lineTo(vpx+side*(road(dNear)+walk(dNear)), yAt(dNear)); c.lineTo(vpx+side*road(dNear), yAt(dNear)); c.closePath(); c.fill();
-    c.strokeStyle='#55575d'; c.lineWidth=2; c.beginPath(); c.moveTo(vpx+side*road(dFar), yAt(dFar)); c.lineTo(vpx+side*road(dNear), yAt(dNear)); c.stroke();
-  }
-  // road surface
-  const rg = c.createLinearGradient(0,hz,0,Y1); rg.addColorStop(0,'#2b2d33'); rg.addColorStop(1,'#1c1d21');
-  c.fillStyle = rg; c.beginPath(); c.moveTo(vpx-road(0),hz); c.lineTo(vpx+road(0),hz); c.lineTo(vpx+road(dNear),yAt(dNear)); c.lineTo(vpx-road(dNear),yAt(dNear)); c.closePath(); c.fill();
-  // lane dashes
-  c.fillStyle='rgba(230,200,90,.75)';
-  for(let d=0.02; d<dNear; d*=1.35){
-    const d2 = d*1.15, w1 = W*0.004+W*0.012*d, w2 = W*0.004+W*0.012*d2;
-    c.beginPath(); c.moveTo(vpx-w1,yAt(d)); c.lineTo(vpx+w1,yAt(d)); c.lineTo(vpx+w2,yAt(d2)); c.lineTo(vpx-w2,yAt(d2)); c.closePath(); c.fill();
-  }
-  // buildings (facades along the sidewalk)
-  const signs = ['BAR','PAWN','PHARMACY','GYM','CASINO','HOTEL','24/7','LOANS','CLUB','BANK','DINER','TATTOO'];
+  const sky = c.createLinearGradient(0,Y0,0,facadeBase);
+  sky.addColorStop(0,'#04060c'); sky.addColorStop(0.6,'#151b30'); sky.addColorStop(0.9,'#3a2c48'); sky.addColorStop(1,'#6a3f4a');
+  c.fillStyle = sky; c.fillRect(X0,Y0,X1-X0,facadeBase-Y0);
+  for(let i=0;i<140;i++){ c.fillStyle=`rgba(255,255,255,${0.2+rnd()*0.5})`; c.fillRect(X0+rnd()*(X1-X0), Y0+rnd()*(facadeBase-Y0)*0.5, 1.2, 1.2); }
+  // distant skyline
+  { let x = X0; while(x < X1){ const bw = W*(0.06+rnd()*0.1), bh = H*(0.25+rnd()*0.35)*sc; c.fillStyle = '#0f121d'; c.fillRect(x, facadeBase - bh - H*0.12*sc, bw+1, bh + H*0.12*sc);
+      for(let wy = facadeBase-bh-H*0.12*sc+6; wy < facadeBase-H*0.1*sc; wy += 8) for(let wx = x+3; wx < x+bw-3; wx += 7) if(rnd()<0.18){ c.fillStyle='rgba(255,214,130,.5)'; c.fillRect(wx, wy, 2.5, 3.5); }
+      x += bw; } }
+  // shopfront row
+  const signs = ['BAR','PAWN SHOP','PHARMACY','GYM','CASINO','HOTEL','24/7','LOANS','NIGHTCLUB','CITY BANK','DINER','TATTOO','HOSPITAL','JAIL','TORN TIMES','POINTS'];
   const neon = ['#ff3b6b','#3bd1ff','#ffd23b','#7cff5a','#ff8a2a','#c35bff'];
-  for(const side of [-1,1]){
-    let d = 0.02, i = side>0 ? 3 : 0;
-    while(d < dNear){
-      const d2 = Math.min(dNear, d*1.55 + 0.03);
-      const e1 = vpx + side*(road(d)+walk(d)), e2 = vpx + side*(road(d2)+walk(d2));
-      const hgt = H*(0.9+rnd()*1.1);
-      const h1 = hgt*d, h2 = hgt*d2;
-      const col = ['#3b3532','#2f333a','#40372f','#2a2d33','#35302e'][i%5];
-      c.fillStyle = col; c.beginPath(); c.moveTo(e1,yAt(d)); c.lineTo(e2,yAt(d2)); c.lineTo(e2,yAt(d2)-h2); c.lineTo(e1,yAt(d)-h1); c.closePath(); c.fill();
-      // windows grid
-      const rows = 8, cols = 4;
-      for(let r=1;r<rows;r++) for(let k=0;k<cols;k++){
-        if(rnd()<0.35) continue;
-        const t1 = (k+0.2)/cols, t2 = (k+0.75)/cols;
-        const lerp = (a,b,t)=>a+(b-a)*t;
-        const x1 = lerp(e1,e2,t1), x2 = lerp(e1,e2,t2);
-        const dd1 = lerp(d,d2,t1), dd2 = lerp(d,d2,t2);
-        const hh1 = hgt*dd1, hh2 = hgt*dd2;
-        const yb1 = yAt(dd1) - hh1*(r/rows), yt1 = yAt(dd1) - hh1*((r+0.55)/rows);
-        const yb2 = yAt(dd2) - hh2*(r/rows), yt2 = yAt(dd2) - hh2*((r+0.55)/rows);
-        c.fillStyle = rnd()<0.55 ? 'rgba(255,205,120,.55)' : 'rgba(20,22,28,.9)';
-        c.beginPath(); c.moveTo(x1,yb1); c.lineTo(x2,yb2); c.lineTo(x2,yt2); c.lineTo(x1,yt1); c.closePath(); c.fill();
-      }
-      // shopfront glow
-      c.fillStyle='rgba(255,190,110,.12)';
-      c.beginPath(); c.moveTo(e1,yAt(d)); c.lineTo(e2,yAt(d2)); c.lineTo(e2,yAt(d2)-h2*0.08); c.lineTo(e1,yAt(d)-h1*0.08); c.closePath(); c.fill();
-      // hanging neon sign (faces viewer)
-      if(d2 > 0.08){
-        const sd = (d+d2)/2, sx = vpx + side*(road(sd)+walk(sd)*0.55), sy = yAt(sd) - hgt*sd*0.22;
-        const sw2 = W*0.16*sd + 14, sh2 = H*0.045*sd + 7, nc = neon[(i*7)%neon.length], txt = signs[(i*5+ (side>0?3:0))%signs.length];
-        c.save(); c.shadowColor = nc; c.shadowBlur = 14;
-        c.fillStyle='rgba(10,10,14,.85)'; c.fillRect(sx-sw2/2, sy-sh2/2, sw2, sh2);
-        c.strokeStyle = nc; c.lineWidth = Math.max(1.5, 2.5*sd); c.strokeRect(sx-sw2/2, sy-sh2/2, sw2, sh2);
-        c.fillStyle = nc; c.font = `bold ${Math.max(7, sh2*0.62)|0}px Arial`; c.textAlign='center'; c.textBaseline='middle';
-        c.fillText(txt, sx, sy+1); c.restore();
-        c.strokeStyle='#111'; c.lineWidth=1.5; c.beginPath(); c.moveTo(sx - side*sw2*0.3, sy-sh2/2); c.lineTo(sx - side*sw2*0.5, sy-sh2*1.4); c.stroke();
-      }
-      // street lamp
-      if(rnd()<0.8 && d2 > 0.06){
-        const ld = d2*0.95, lx = vpx + side*(road(ld)+walk(ld)*0.12), ly = yAt(ld), lh = H*0.9*ld;
-        c.strokeStyle='#15161a'; c.lineWidth=Math.max(1.5, 5*ld); c.beginPath(); c.moveTo(lx,ly); c.lineTo(lx,ly-lh); c.lineTo(lx - side*W*0.06*ld, ly-lh); c.stroke();
-        const gx = lx - side*W*0.06*ld, gy = ly-lh+3;
-        const gl = c.createRadialGradient(gx,gy,0,gx,gy,H*0.18*ld+8); gl.addColorStop(0,'rgba(255,220,150,.75)'); gl.addColorStop(1,'rgba(255,200,120,0)');
-        c.fillStyle = gl; c.beginPath(); c.arc(gx,gy,H*0.18*ld+8,0,7); c.fill();
-        const pool = c.createRadialGradient(gx,ly,0,gx,ly,W*0.25*ld+6); pool.addColorStop(0,'rgba(255,210,140,.18)'); pool.addColorStop(1,'rgba(255,210,140,0)');
-        c.fillStyle = pool; c.beginPath(); c.ellipse(gx, ly, W*0.25*ld+6, H*0.03*ld+3, 0, 0, 7); c.fill();
-      }
-      d = d2; i++;
+  const walls = ['#4a3a34','#3a3f48','#54443a','#33363d','#5a4438','#3d3a44'];
+  let x = X0, i = 0;
+  while(x < X1){
+    const bw = W*(0.42 + rnd()*0.3)*sc, bh = H*(0.32 + rnd()*0.22)*sc, top = facadeBase - bh, col = walls[i%walls.length];
+    const gr = c.createLinearGradient(x,0,x+bw,0); gr.addColorStop(0, shade(col,0.08)); gr.addColorStop(1, shade(col,-0.25));
+    c.fillStyle = gr; c.fillRect(x, top, bw+1, bh);
+    // cornice
+    c.fillStyle = shade(col,-0.35); c.fillRect(x, top, bw, H*0.012*sc);
+    // upper windows
+    const rows = Math.max(2, Math.floor(bh/(H*0.07*sc)) - 1), cols = Math.max(2, Math.floor(bw/(W*0.12*sc)));
+    for(let r=0;r<rows;r++) for(let k=0;k<cols;k++){
+      const wx = x + (k+0.25)*bw/cols, wy = top + H*0.03*sc + r*(bh*0.62)/rows, ww = bw/cols*0.5, wh = (bh*0.62)/rows*0.6;
+      c.fillStyle = rnd()<0.55 ? 'rgba(255,205,120,.6)' : '#15171c'; c.fillRect(wx, wy, ww, wh);
+      c.fillStyle = 'rgba(0,0,0,.35)'; c.fillRect(wx, wy+wh, ww, 2);
     }
+    // shopfront: big window + door + awning
+    const sfTop = facadeBase - bh*0.3;
+    c.fillStyle = 'rgba(255,190,110,.18)'; c.fillRect(x + bw*0.06, sfTop, bw*0.62, bh*0.3);
+    c.fillStyle = '#1a1b20'; c.fillRect(x + bw*0.74, sfTop, bw*0.18, bh*0.3);
+    c.strokeStyle = 'rgba(0,0,0,.6)'; c.lineWidth = 2; c.strokeRect(x + bw*0.06, sfTop, bw*0.62, bh*0.3);
+    const aw = ['#8a1d1d','#1d4a8a','#2a6a2a','#6a2a6a','#8a6a1d'][i%5];
+    c.fillStyle = aw; c.beginPath(); c.moveTo(x+bw*0.03, sfTop); c.lineTo(x+bw*0.71, sfTop); c.lineTo(x+bw*0.74, sfTop+H*0.025*sc); c.lineTo(x, sfTop+H*0.025*sc); c.closePath(); c.fill();
+    for(let st=0; st<8; st++){ c.fillStyle='rgba(255,255,255,.12)'; c.fillRect(x+bw*(0.03+st*0.085), sfTop, bw*0.04, H*0.025*sc); }
+    // neon sign over the shop
+    const nc = neon[i%neon.length], txt = signs[(i*7)%signs.length], sh = H*0.035*sc, sw = Math.min(bw*0.62, txt.length*sh*0.62 + sh);
+    const sx = x + bw*0.37 - sw/2, sy = sfTop - sh*1.5;
+    c.save(); c.shadowColor = nc; c.shadowBlur = 16; c.fillStyle='rgba(10,10,14,.9)'; c.fillRect(sx, sy, sw, sh);
+    c.strokeStyle = nc; c.lineWidth = 2; c.strokeRect(sx, sy, sw, sh);
+    c.fillStyle = nc; c.font = `bold ${sh*0.62|0}px Arial`; c.textAlign='center'; c.textBaseline='middle'; c.fillText(txt, sx+sw/2, sy+sh/2+1); c.restore();
+    // fire escape on some
+    if(rnd()<0.4){ c.strokeStyle='rgba(20,20,22,.9)'; c.lineWidth=2; const fx = x + bw*0.8; for(let fy = top + bh*0.15; fy < sfTop - 10; fy += bh*0.18){ c.strokeRect(fx - bw*0.1, fy, bw*0.2, 3); c.beginPath(); c.moveTo(fx - bw*0.1, fy); c.lineTo(fx + bw*0.1, fy + bh*0.18); c.stroke(); } }
+    // drainpipe between buildings
+    c.fillStyle = 'rgba(0,0,0,.45)'; c.fillRect(x + bw - 3, top, 4, bh);
+    x += bw; i++;
   }
-  // haze at horizon
-  const hzG = c.createLinearGradient(0,hz-H*0.08,0,hz+H*0.05); hzG.addColorStop(0,'rgba(138,79,74,0)'); hzG.addColorStop(0.6,'rgba(138,79,74,.25)'); hzG.addColorStop(1,'rgba(138,79,74,0)');
-  c.fillStyle = hzG; c.fillRect(X0,hz-H*0.08,X1-X0,H*0.13);
+  // back pavement + kerb
+  c.fillStyle = '#4a4c52'; c.fillRect(X0, facadeBase, X1-X0, kerb - facadeBase);
+  c.fillStyle = '#6a6c72'; c.fillRect(X0, kerb - 3, X1-X0, 4);
+  for(let px = X0; px < X1; px += W*0.12*sc){ c.fillStyle='rgba(0,0,0,.15)'; c.fillRect(px, facadeBase, 2, kerb-facadeBase); }
+  // street lamps along the pavement
+  for(let lx = X0 + W*0.2; lx < X1; lx += W*0.55*sc){
+    const lh = H*0.32*sc;
+    c.strokeStyle='#121316'; c.lineWidth = 4*sc; c.beginPath(); c.moveTo(lx, kerb - 4); c.lineTo(lx, kerb - lh); c.lineTo(lx + W*0.05*sc, kerb - lh); c.stroke();
+    const gx = lx + W*0.05*sc, gy = kerb - lh + 4;
+    const gl = c.createRadialGradient(gx,gy,0,gx,gy,H*0.16*sc); gl.addColorStop(0,'rgba(255,220,150,.75)'); gl.addColorStop(1,'rgba(255,200,120,0)');
+    c.fillStyle = gl; c.beginPath(); c.arc(gx,gy,H*0.16*sc,0,7); c.fill();
+    const pool = c.createRadialGradient(gx,kerb+H*0.05,0,gx,kerb+H*0.05,W*0.3*sc); pool.addColorStop(0,'rgba(255,210,140,.16)'); pool.addColorStop(1,'rgba(255,210,140,0)');
+    c.fillStyle = pool; c.beginPath(); c.ellipse(gx, kerb+H*0.05, W*0.3*sc, H*0.06*sc, 0, 0, 7); c.fill();
+  }
+  // the road (wide, runs left-right across the whole field)
+  const rg = c.createLinearGradient(0,kerb,0,Y1); rg.addColorStop(0,'#2a2c32'); rg.addColorStop(1,'#16171b');
+  c.fillStyle = rg; c.fillRect(X0, kerb, X1-X0, Y1-kerb);
+  // lane markings: dashed lines that get bigger as they come towards you
+  for(const [f, wdt] of [[0.18, 3], [0.55, 6]]){
+    const ly = kerb + (H - kerb)*f;
+    c.fillStyle='rgba(230,200,90,.7)';
+    for(let lx = X0; lx < X1; lx += W*0.2*(1+f)) c.fillRect(lx, ly, W*0.1*(1+f), wdt*sc);
+  }
+  // pedestrian crossing near you
+  for(let k=0;k<9;k++){ c.fillStyle='rgba(235,235,235,.18)'; c.fillRect(W*0.5 - W*0.6 + k*W*0.15, kerb + (H-kerb)*0.75, W*0.08, H*0.2); }
+  // puddle reflections
+  for(let k=0;k<6;k++){ const px = X0 + rnd()*(X1-X0), py = kerb + (H-kerb)*(0.3+rnd()*0.6); c.fillStyle='rgba(120,140,190,.08)'; c.beginPath(); c.ellipse(px,py,W*0.08,H*0.012,0,0,7); c.fill(); }
   return {cv:cv2, bs};
 }
 
@@ -1920,7 +1922,9 @@ function drawHUD(c, now){
   // NPC portrait card before the draw
   if((D.phase==='holster' || D.phase==='steady' || D.phase==='ready') && D.oppCard && D.oppCard.complete && D.oppCard.naturalWidth){
     const cw = Math.min(W*0.24, 110), ch = cw*1.375;
-    c.save(); c.shadowColor='rgba(0,0,0,.6)'; c.shadowBlur=10; c.drawImage(D.oppCard, W - cw - 10, top + 84, cw, ch); c.restore();
+    const iw = D.oppCard.naturalWidth, ih = D.oppCard.naturalHeight, want = cw/ch;
+    let sw = iw, sh = ih, sx = 0, sy = 0; if(iw/ih > want){ sw = ih*want; sx = (iw-sw)/2; } else { sh = iw/want; sy = 0; }
+    c.save(); c.shadowColor='rgba(0,0,0,.6)'; c.shadowBlur=10; c.drawImage(D.oppCard, sx, sy, sw, sh, W - cw - 10, top + 84, cw, ch); c.restore();
     c.strokeStyle='rgba(0,0,0,.8)'; c.lineWidth=1; c.strokeRect(W - cw - 10 + .5, top + 84 + .5, cw-1, ch-1);
   }
   // round pips
@@ -1950,6 +1954,17 @@ function drawHUD(c, now){
     if(big){ c.lineWidth=5; c.strokeStyle='#b0201a'; c.strokeText('DRAW!', W/2, y); }
     c.fillText(D.msg.toUpperCase(), W/2, y);
     if(D.msgSub){ c.font=`bold ${subFs|0}px Arial`; c.fillStyle='#eee'; c.fillText(D.msgSub, W/2, y + fs*0.55 + subFs*0.7); }
+  }
+  if(D.phase==='ready' || D.phase==='holster' || D.phase==='steady'){
+    // live left/right test: turn your body and the dot should follow
+    if(D.mode==='motion' && sensor.up && now - sensor.rateAt < 300){
+      const u = sensor.up, turn = sensor.rx*u[0] + sensor.ry*u[1] + sensor.rz*u[2];
+      D.turnTest = clamp((D.turnTest||0) - turn*(D.dtLast||16)/1000, -45, 45) * 0.995;
+      const bw = Math.min(W*0.6, 240), bx = W/2 - bw/2, by = H*0.86 + 22;
+      c.fillStyle='rgba(0,0,0,.5)'; c.fillRect(bx, by, bw, 6);
+      c.fillStyle='#4fa3ff'; c.beginPath(); c.arc(W/2 + (D.turnTest/45)*bw/2, by+3, 7, 0, 7); c.fill();
+      c.font='11px Arial'; c.fillStyle='rgba(255,255,255,.75)'; c.textAlign='center'; c.fillText('Turn test: turn left/right — the dot should follow', W/2, by + 22);
+    }
   }
   if(D.phase==='ready'){
     c.textAlign='center'; c.textBaseline='alphabetic'; c.font=`bold ${Math.max(13,H*0.02)|0}px Arial`; c.fillStyle='#fff';

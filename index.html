@@ -81,6 +81,9 @@ button:disabled{opacity:.5}
 .dslot.empty{color:#888}
 .dslot.temp{background:rgba(40,40,48,.88)}
 .dslot.temp.empty{opacity:.45}
+#reloadBtn{position:absolute;right:8px;bottom:calc(env(safe-area-inset-bottom) + 52px);width:auto;margin:0;padding:12px 14px;font-size:13px;z-index:3;display:none;background:linear-gradient(180deg,#5a5a5a,#383838)}
+#reloadBtn.urgent{background:linear-gradient(180deg,#d9472b,#8a2414);color:#fff;animation:pulse .6s infinite alternate}
+@keyframes pulse{to{transform:scale(1.06)}}
 #quit{position:absolute;right:8px;bottom:calc(env(safe-area-inset-bottom) + 8px);width:auto;margin:0;padding:8px 10px;font-size:11px;z-index:3;background:rgba(40,40,40,.85)}
 /* results */
 .big{font-family:'Arial Black',Arial,sans-serif;font-size:40px;text-align:center;margin:24px 0 2px;text-transform:uppercase}
@@ -192,6 +195,7 @@ details summary{cursor:pointer;color:#7aa7d8;font-size:13px;margin-top:10px}
   <canvas id="cv"></canvas>
   <div id="dslots"></div>
   <button id="quit">✕ Leave</button>
+  <button id="reloadBtn">RELOAD</button>
 </div>
 
 <script>
@@ -840,8 +844,8 @@ function renderSettings(){
   $('invX').checked = !!s.invX; $('invX').onchange = e=>{ s.invX=e.target.checked; save(); };
   $('motionOpts').style.display = s.mode==='motion' ? '' : 'none';
   $('modeHelp').innerHTML = s.mode==='motion'
-    ? 'Hold your phone at your hip pointing at the ground. Stay still. On the bell and <b>DRAW!</b>, raise it like a gun. Turn and tilt the phone to aim, tap anywhere to fire. Tap a weapon slot to switch guns. Raise early and you lose the round.'
-    : 'Keep a finger held on the screen. On <b>DRAW!</b>, lift it and tap your target to shoot. Lift early and you lose the round. Works on PC with a mouse.';
+    ? 'Hold your phone at your hip pointing at the ground. Stay still. On the bell and <b>DRAW!</b>, raise it like a gun. Turn and tilt the phone to aim, tap anywhere to fire. To reload, point the phone at the ground then raise it again. Tap a weapon slot to switch guns. Raise early and you lose the round.'
+    : 'Keep a finger held on the screen. On <b>DRAW!</b>, lift it and tap your target to shoot. Tap RELOAD when your clip runs low. Lift early and you lose the round. Works on PC with a mouse.';
 }
 
 /* =========================================================
@@ -865,6 +869,7 @@ function sfxBell(){
   [660,990,1320].forEach((fr,i)=>{ const o=ac.createOscillator(); o.type= i?'sine':'square'; o.frequency.value=fr; const g=ac.createGain(); g.gain.setValueAtTime(0.22/(i+1),t); g.gain.exponentialRampToValueAtTime(0.001,t+0.9); o.connect(g).connect(ac.destination); o.start(t); o.stop(t+1); });
 }
 function sfxClick(){ const ac=audio(); if(!ac) return; const t=ac.currentTime; const o=ac.createOscillator(); o.type='square'; o.frequency.value=1800; const g=ac.createGain(); g.gain.setValueAtTime(0.15,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.04); o.connect(g).connect(ac.destination); o.start(t); o.stop(t+0.05); }
+function sfxRack(){ const ac=audio(); if(!ac) return; const t=ac.currentTime; [0,0.09].forEach((d,i)=>{ const src=ac.createBufferSource(); src.buffer=noiseBuf(ac,0.06); const f=ac.createBiquadFilter(); f.type='bandpass'; f.frequency.value= i?2400:1500; f.Q.value=3; const g=ac.createGain(); g.gain.setValueAtTime(0.5,t+d); g.gain.exponentialRampToValueAtTime(0.001,t+d+0.06); src.connect(f).connect(g).connect(ac.destination); src.start(t+d); }); }
 function sfxHit(){ const ac=audio(); if(!ac) return; const t=ac.currentTime; const o=ac.createOscillator(); o.frequency.setValueAtTime(220,t); o.frequency.exponentialRampToValueAtTime(60,t+0.2); const g=ac.createGain(); g.gain.setValueAtTime(0.6,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.25); o.connect(g).connect(ac.destination); o.start(t); o.stop(t+0.3); }
 function sfxCity(){ const ac=audio(); if(!ac) return null; const src=ac.createBufferSource(); src.buffer=noiseBuf(ac,4); src.loop=true; const f=ac.createBiquadFilter(); f.type='lowpass'; f.frequency.value=380; const g=ac.createGain(); g.gain.value=0.06; src.connect(f).connect(g).connect(ac.destination); src.start(); return {stop(){ try{ g.gain.setTargetAtTime(0,ac.currentTime,0.2); src.stop(ac.currentTime+0.6);}catch(e){} }}; }
 function buzz(p){ try{ navigator.vibrate && navigator.vibrate(p); }catch(e){} }
@@ -945,6 +950,7 @@ $('btnDuel').onclick = startMatch;
 $('btnRematch').onclick = startMatch;
 $('btnBack').onclick = enterLobby;
 $('quit').onclick = ()=> endMatch(true);
+$('reloadBtn').onpointerdown = e=>{ e.stopPropagation(); e.preventDefault(); if(D) startReload(performance.now()); };
 
 async function startMatch(){
   audio();
@@ -999,6 +1005,7 @@ function updateAmmoText(){
 function switchGun(i){
   if(!D || i===D.cur || D.phase!=='draw' || D.roundOver) { if(D && D.phase!=='draw' && i!==D.cur){ D.cur=i; renderDSlots(); } return; }
   D.cur = i; const me = D.me, now = performance.now();
+  if(me.reloadUntil){ me.reloadUntil = 0; me.reloadGun = null; }
   if(me.drawnAt!=null){ me.readyAt = now + curGun().w.draw; me.switchAt = now; }
   renderDSlots();
 }
@@ -1063,10 +1070,14 @@ function update(now, dt){
     // bursts (one tap = one Torn turn)
     let guard = 0;
     while(me.burst && now >= me.burst.next && guard++ < 6) fireBullet(now);
-    // reload (costs time, like a Torn turn)
-    const g = curGun();
-    if(g.ammo<=0 && g.clips>0 && !me.reloadUntil && !me.burst){ me.reloadUntil = now + g.w.reload; }
-    if(me.reloadUntil && now>=me.reloadUntil){ const gg = curGun(); if(gg.ammo<=0 && gg.clips>0){ gg.ammo = gg.w.mag; gg.clips--; } me.reloadUntil = 0; renderDSlots(); }
+    // reload: lower the phone (point it at the ground) or tap RELOAD
+    if(D.mode==='motion' && me.drawnAt!=null){
+      const p = pitchNow(), down = p!=null && p < -30;
+      if(down && !me.lowered){ me.lowered = true; startReload(now); }
+      if(!down && p!=null && p > 0) me.lowered = false;
+    }
+    if(me.reloadUntil && now>=me.reloadUntil){ const gg = me.reloadGun; if(gg && gg.clips>0){ gg.ammo = gg.w.mag; gg.clips--; sfxRack(); } me.reloadUntil = 0; me.reloadGun = null; renderDSlots(); }
+    updateReloadBtn(now);
     // thrown temporaries
     updateThrows(now);
     // effects on opponent: burning damage
@@ -1149,6 +1160,7 @@ function playerFire(sx, sy){
   if(me.reloadUntil){ sfxClick(); return; }
   if(G.ammo<=0){
     sfxClick();
+    if(G.clips>0){ setMsg('RELOAD', D.mode==='motion' ? 'Point your phone at the ground' : 'Tap RELOAD', 900); return; }
     if(G.clips<=0){ const other = D.guns.some(g=>g!==G && g.ammo+g.clips>0); setMsg('Out of ammo', other ? 'Switch weapon' : (D.temp && !D.temp.used ? 'Use your temporary' : 'Nothing left to fire'), 900); }
     return;
   }
@@ -1184,6 +1196,21 @@ function fireBullet(now){
   if(total>0){ me.hits++; damageOpp(total, best, now); }
   if(b.left<=0) endBurst(now, w);
   else b.next = now + w.burstGap * (me.buff.speed ? 0.7 : 1);
+}
+function startReload(now){
+  const me = D.me, G = curGun();
+  if(D.phase!=='draw' || D.roundOver || me.drawnAt==null || me.reloadUntil || me.burst) return;
+  if(G.ammo >= G.w.mag) return;
+  if(G.clips<=0){ setMsg('No clips left', D.guns.some(g=>g!==G && g.ammo+g.clips>0) ? 'Switch weapon' : 'Out of ammo', 900); return; }
+  me.reloadUntil = now + G.w.reload; me.reloadGun = G; me.reloadStart = now; sfxClick();
+}
+function updateReloadBtn(now){
+  const b = $('reloadBtn'); if(!b || !D) return;
+  const G = curGun(), me = D.me;
+  const need = D.phase==='draw' && me.drawnAt!=null && G.ammo < G.w.mag && G.clips>0;
+  b.style.display = (D.mode==='touch' || G.ammo===0) && need ? 'block' : 'none';
+  b.classList.toggle('urgent', G.ammo===0);
+  b.textContent = me.reloadUntil ? 'RELOADING…' : (D.mode==='motion' ? 'RELOAD ↓ point phone down' : 'RELOAD');
 }
 function endBurst(now, w){ const me = D.me; me.burst = null; me.nextTurn = now + w.turnGap * (me.buff.speed ? 0.7 : 1); renderDSlots(); }
 function damageOpp(total, best, now, quiet){
@@ -1521,7 +1548,8 @@ function drawPlayerView(c, now){
   const sw = sway(now);
   const since = now - Math.max(me.drawnAt, me.switchAt||0);
   const k = clamp(since / w.draw, 0, 1), e = 1 - Math.pow(1-k,3);
-  const kick = me.recoil;
+  let kick = me.recoil;
+  if(me.reloadUntil){ const t = clamp((now - me.reloadStart)/(me.reloadUntil - me.reloadStart), 0, 1); kick += Math.sin(t*Math.PI) * H*0.25; }
   const gw = Math.min(W*0.62, H*0.42), gh = gw*0.5;
   const gx = W*0.66 + sw.x*0.4, gy = H - gh*0.45 + H*0.3*(1-e) + kick*0.7 + sw.y*0.4;
   c.save(); c.translate(gx, gy); c.rotate(0.32 + kick/300); c.scale(-1,1);
@@ -1573,6 +1601,7 @@ function drawHUD(c, now){
   // reload / switching
   const me = D.me, G = curGun();
   if(D.phase==='draw' && me.reloadUntil){ centerTag(c, 'RELOADING', H*0.62, '#ffd23b'); }
+  else if(D.phase==='draw' && me.drawnAt!=null && G.ammo===0 && G.clips>0){ centerTag(c, D.mode==='motion' ? 'RELOAD — point phone down' : 'RELOAD', H*0.62, '#ff6a4a'); }
   else if(D.phase==='draw' && me.drawnAt!=null && now < me.readyAt && me.switchAt){ centerTag(c, 'SWITCHING', H*0.62, '#ddd'); }
   // messages (Torn attack-screen style box)
   if(now < D.msgT && D.msg){

@@ -1478,6 +1478,7 @@ function loop(now){
 
 function update(now, dt){
   const me = D.me, op = D.op;
+  if(!me || !op) return;   // match still setting up
   if(D.phase==='holster'){
     if(isHolstered()){
       if(!D.holsterSince) D.holsterSince = now;

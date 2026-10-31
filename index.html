@@ -1133,7 +1133,7 @@ function selfNpc(){
   const p = store.player || {}, gun = currentGun();
   const o = { id:'self', name: p.name || 'You', title:'You (test dummy)', card: p.image || null, weapon: gun.arch || 'pistol',
     react:600, acc:0.45, life: p.life || 1000, speed:0.16, stars:3, bstats: store.bstats || null, look: myLook, cover:null,
-    gun, tempItem: currentTemp(), temp: tempInfo(currentTemp()) ? 'mirror' : null };
+    gun, guns: [gun, ...usableGuns().filter(g=>g!==gun)], tempItem: currentTemp(), temp: tempInfo(currentTemp()) ? 'mirror' : null };
   if(selectedOpp && selectedOpp.id==='self') selectedOpp = o;
   return o;
 }
@@ -1451,6 +1451,7 @@ function newRound(){
   renderDSlots();
   D.op = { hp:100, ammo:D.oppW.mag, clips:SPARE_CLIPS, state:'idle', stateT:0, nextShot:Infinity, dead:false, deadT:0, flinchUntil:0,
            x:0, tx:0, v:0, walk:0, lastFire:0, eff:{} };
+  if(D.opp.guns){ D.op.arsenal = D.opp.guns.map(g=>{ const w = weaponStats(g); return {gun:g, w, ammo:w.mag, clips:SPARE_CLIPS}; }); syncOppGun(0); }
   D.holes = []; D.particles = []; D.splats = []; D.meDeadT = null; D.roundOver=false; D.result=null;
   setMsg(D.round===1 ? D.opp.name : `Round ${D.round}`, D.phase==='ready' ? 'Hold your phone comfortably, then tap READY' : (D.mode==='motion' ? 'Holster: hold your phone flat' : 'Hold your finger on the screen'), 99999);
   // cover position for this round
@@ -1531,6 +1532,7 @@ function update(now, dt){
     if(!op.dead && oppHas('burning', now)){ op.hp -= EFFECTS.burning.dot * dt/1000 / MATCH_LEN; if(op.hp<=0){ op.dead = true; op.deadT = now; finishRound('win', 'Burned out', now); } }
     // effects on you
     if(op.poisoned && !op.dead && now >= op.poisonNext){ op.poisonNext += 5000; damageOpp(1*MATCH_LEN, 'torso', now, true); }
+    if(me.poisoned && now >= me.poisonNext){ me.poisonNext += 5000; me.hp -= 1; if(me.hp<=0) finishRound('lose', `${D.opp.name}'s poison finished you`, now); }
     if(now < me.burnUntil){ me.hp -= 2.6 * dt/1000 * (me.buff.defense?0.5:1) / MATCH_LEN; if(me.hp<=0) finishRound('lose', `${D.opp.name} set you on fire`, now); }
     // NPC temporary
     if(D.npcTempAt && now >= D.npcTempAt && !op.dead && !D.roundOver){ D.npcTempAt = null; npcUseTemp(now); }
@@ -1541,13 +1543,13 @@ function update(now, dt){
       const exposed = op.crouch < 0.3 && (op.mode==='hold' || !op.running);     // they also fire while walking
       if(op.state==='aiming' && exposed && now >= op.nextShot && now >= op.flinchUntil) aiShoot(now);
       if(op.burstLeft>0 && op.ammo<=0) op.burstLeft = 0;
-      if(op.burstLeft>0 && now >= op.burstNext && exposed){ aiBullet(now); op.burstLeft--; op.burstNext = now + 90; }
+      if(op.burstLeft>0 && now >= op.burstNext && exposed){ aiBullet(now); op.burstLeft--; op.burstNext = now + (D.oppW.real ? (D.oppW.real.burstGap||60) : 90); }
       coverAI(now, dt);
       kneelAI(now, dt);
       strafe(now, dt);
     }
     if(!D.roundOver && now - D.phaseT > ROUND_MS) finishRound(me.hp >= op.hp ? 'win':'lose', 'Time ran out', now);
-    if(!D.roundOver && !me.burst && !me.reloading && op.ammo<=0 && op.clips<=0 && !op.burstLeft && D.guns.every(g=>g.ammo+g.clips+g.spare<=0)) finishRound('draw', 'Both out of ammo', now);
+    if(!D.roundOver && !me.burst && !me.reloading && op.ammo<=0 && op.clips<=0 && !oppHasOther() && !op.burstLeft && D.guns.every(g=>g.ammo+g.clips+g.spare<=0)) finishRound('draw', 'Both out of ammo', now);
   }
   if(op.dead) op.v *= 0.9;
   D.particles = D.particles.filter(p=>{ p.t += dt; p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 0.0006*dt; return p.t < p.life; });
@@ -1928,7 +1930,27 @@ function puff(x,y,c){ for(let i=0;i<6;i++) D.particles.push({x,y,vx:(Math.random
 
 /* ---------- AI shooting ---------- */
 // The NPC takes a "turn" every couple of seconds (quicker on harder NPCs); autos fire a short burst
+// The NPC copy of you carries your real guns and uses them like a player would
+function oppWFrom(w){ return Object.assign({}, ARCH[w.arch], {mag: w.mag, reload: w.reload, pellets: w.pellets || ARCH[w.arch].pellets, dmgMul: 1, name: w.name, real: w}); }
+function syncOppGun(i){ const op = D.op, A = op.arsenal[i]; op.gi = i; A.w.name = A.gun.name; D.oppW = oppWFrom(A.w); D.opp.weapon = A.w.arch; op.ammo = A.ammo; op.clips = A.clips; }
+function oppReload(now){ const op = D.op, rl = D.oppW.reload / D.opMods.dex * (D.opBuff.dexterity ? 0.5 : 1); op.clips--; op.reloadStart = now; op.reloadUntil = now + rl; op.ammo = D.oppW.mag; op.nextShot = now + rl + 200; op.burstLeft = 0; sfxMag(true); }
+function oppHasOther(){ const op = D.op; return op.arsenal && op.arsenal.some((a,i)=> i!==op.gi && a.ammo + a.clips > 0); }
+function aiShootReal(now){
+  const op = D.op, w = D.oppW.real, A = op.arsenal[op.gi];
+  if(op.ammo<=0){
+    if(op.clips>0) oppReload(now);
+    else if(oppHasOther()){ A.ammo = op.ammo; A.clips = op.clips; const j = op.arsenal.findIndex((a,i)=> i!==op.gi && a.ammo + a.clips > 0); syncOppGun(j); op.state = 'drawing'; op.stateT = now; op.readyAt = now + D.oppW.draw / D.opMods.spd + 250; op.nextShot = op.readyAt; setMsg('SWITCHING', `${D.opp.name} pulled out the ${A.gun===op.arsenal[j].gun ? '' : op.arsenal[j].gun.name}`, 700); }
+    else op.nextShot = Infinity;
+    return;
+  }
+  // tops up a low mag sometimes, like a player tipping the phone down
+  if(op.clips>0 && op.ammo < w.mag*0.2 && w.mag > 2 && Math.random() < 0.35){ oppReload(now); return; }
+  const n = (w.arch==='pistol' || w.arrow) ? 1 : Math.max(1, Math.round(w.rofMin + Math.random()*(w.rofMax - w.rofMin)));
+  op.burstLeft = Math.min(n, op.ammo); op.burstNext = now;
+  op.nextShot = now + n*(w.burstGap||60) + (550 + Math.random()*700) * oppMod('pace', now) * (D.opBuff.speed ? 0.5 : 1) / Math.sqrt(D.opMods.spd);
+}
 function aiShoot(now){
+  if(D.op.arsenal){ const op = D.op; if(op.eff.blinded && now < op.eff.blinded.start + EFFECTS.blinded.hold){ op.nextShot = op.eff.blinded.start + EFFECTS.blinded.hold + 100; return; } aiShootReal(now); return; }
   const op = D.op, ow = D.oppW;
   if(op.eff.blinded && now < op.eff.blinded.start + EFFECTS.blinded.hold){ op.nextShot = op.eff.blinded.start + EFFECTS.blinded.hold + 100; return; }
   if(op.ammo<=0){ if(op.clips>0){ op.clips--; const rl = ow.reload / D.opMods.dex; op.reloadStart = now; op.reloadUntil = now + rl; op.ammo = ow.mag; op.nextShot = now + rl + 150; sfxMag(true); } else op.nextShot = Infinity; return; }
@@ -1938,7 +1960,9 @@ function aiShoot(now){
 }
 function aiBullet(now){
   const op = D.op, ow = D.oppW, me = D.me;
-  op.ammo--; op.lastFire = now; sfxBang(false, true);
+  const rw = ow.real;
+  op.ammo--; op.lastFire = now;
+  if(rw){ if(rw.dart) sfxDart(); else if(rw.arrow) sfxArrow(); else sfxBang(!!rw.splash); } else sfxBang(false, true);
   let acc = D.opp.acc * oppMod('acc', now) * (D.opBuff.dexterity ? 1.5 : 1);
   if(now < D.me.flashUntil) acc *= 1.1;
   if(op.hp < 50) acc *= 0.85;
@@ -1949,12 +1973,14 @@ function aiBullet(now){
     if(Math.random() < acc * (ow.pellets>1 ? 0.75 : 1)){
       const r = Math.random(); const z = r<0.12?'head':r<0.72?'torso':r<0.86?'arm':'leg';
       let m = ZONE_MULT[z]; if(z==='head' && D.armour.helmet) m *= 0.5;
-      dmg += (AI_DMG[D.opp.weapon]||20) * (ow.dmgMul||1) * (D.opBuff.strength ? 1.5 : 1) * m; if(!zone || ZONE_MULT[z]>ZONE_MULT[zone]) zone=z;
+      const base = rw ? (rw.pellets>1 ? rw.bullet*1.6/rw.pellets : rw.bullet) : (AI_DMG[D.opp.weapon]||20) * (ow.dmgMul||1);
+      dmg += base * (D.opBuff.strength ? 1.5 : 1) * m; if(!zone || ZONE_MULT[z]>ZONE_MULT[zone]) zone=z;
     }
   }
   if(dmg>0){
     dmg *= (1 - D.armour.reduce) * (me.buff.defense ? 0.5 : 1) * D.opMods.str / D.myMods.def;
     dmg /= MATCH_LEN; me.hp -= dmg; me.hurt = Math.min(1, me.hurt + dmg*MATCH_LEN/60); D.hurtFlash = 1; D.shake = 1; buzz(80); sfxHit();
+    if(rw && rw.dart && !me.poisoned){ me.poisoned = true; me.poisonNext = now + 5000; setMsg('POISONED', 'Losing 1% life every 5s', 1200); }
     if(me.hp<=0){ D.meDeadT = now; finishRound('lose', zone==='head' ? `${D.opp.name} landed a headshot` : `${D.opp.name} was quicker`, now); }
     else screenBlood(dmg);
   }
@@ -2552,6 +2578,9 @@ function drawEffects(c, now){
   if(oppHas('gassed', now)) cloud(c, cx, g.feet - g.h*0.6, g.h*0.5, [195,205,110], 0.45, now);
   if(oppHas('burning', now)) flames(c, cx, g.feet, g.h*0.32, 1, now);
   if(now - (D.opBuffFx||-1e9) < 900){ const k = (now - D.opBuffFx)/900; c.strokeStyle = `rgba(120,230,80,${1-k})`; c.lineWidth = 3; c.beginPath(); c.ellipse(cx, g.feet - g.h*0.5, g.h*(0.2+k*0.15), g.h*(0.55+k*0.1), 0, 0, 7); c.stroke(); }
+  if(now < (op.reloadUntil||0)){ const k = (now - op.reloadStart)/(op.reloadUntil - op.reloadStart), fs = Math.max(9, g.h*0.045)|0, ty = top - g.h*(op.poisoned ? 0.13 : 0.06);
+    c.font = `bold ${fs}px Arial`; c.textAlign='center'; c.fillStyle='#f0c040'; c.fillText('RELOADING', cx, ty);
+    c.fillStyle='rgba(0,0,0,.6)'; c.fillRect(cx - g.h*0.12, ty + 3, g.h*0.24, 4); c.fillStyle='#f0c040'; c.fillRect(cx - g.h*0.12, ty + 3, g.h*0.24*k, 4); }
   if(op.poisoned){ for(let i=0;i<5;i++){ const k = ((now/1400) + i/5) % 1; c.fillStyle = `rgba(110,220,60,${0.7*(1-k)})`; c.beginPath(); c.arc(cx + (i-2)*g.h*0.035, top + g.h*0.25 - k*g.h*0.22, g.h*0.012*(1+k), 0, 7); c.fill(); }
     c.font = `bold ${Math.max(9, g.h*0.045)|0}px Arial`; c.textAlign='center'; c.fillStyle='#8ee05a'; c.fillText('POISONED', cx, top - g.h*0.06); }
   if(oppHas('peppered', now)){ c.fillStyle = 'rgba(255,90,30,.45)'; c.beginPath(); c.arc(cx, top + g.h*0.08, g.h*0.09, 0, 7); c.fill(); }

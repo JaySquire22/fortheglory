@@ -248,6 +248,8 @@ const RECOIL_SCALE = 0.2; // overall recoil strength
 // NPC damage per body hit, as % of your health (High Duel: a hit takes ~20-25%)
 const AI_DMG = {pistol:21, smg:8, rifle:25, shotgun:4.5, mg:6.5, heavy:38};
 const ROUND_MS = 180000;     // 3 minute round timer
+const RELOAD_MS = 2000;      // standard magazine reload
+const RELOAD_TIER = {D:1.2, C:1.1, B:1, A:0.9, S:0.8};
 const KILL_FRAC = 0.4; 
 const TIER_KILL = {D:1.25, C:1.12, B:1, A:0.88, S:0.75};   // share of ammo needed vs KILL_FRAC: S-tier guns kill with ~30%, D-tier ~50%
       // landing ~40% of your ammo on the body kills (better guns need less)
@@ -283,7 +285,7 @@ const TEMP_TYPES = [
   [/epinephrine/i,                  {kind:'self', buff:'strength',  desc:'+50% damage this round'}],
   [/melatonin/i,                    {kind:'self', buff:'speed',     desc:'+50% firing speed this round'}],
   [/serotonin/i,                    {kind:'self', buff:'defense',   desc:'-50% damage taken this round'}],
-  [/tyrosine/i,                     {kind:'self', buff:'dexterity', desc:'+50% steadier aim & recoil control this round'}],
+  [/tyrosine/i,                     {kind:'self', buff:'dexterity', desc:'+50% steadier aim, recoil control & reload speed this round'}],
   [/./,                             {kind:'blast', dmg:7, radius:0.05, fx:'thud', desc:'Thrown for a little damage'}],
 ];
 function tempInfo(item){ if(!item) return null; for(const [rx,t] of TEMP_TYPES) if(rx.test(item.name)) return Object.assign({name:item.name, id:item.id}, t); return null; }
@@ -454,6 +456,10 @@ function weaponStats(gun){
   w.bullet = 100/(ammoTot*KILL_FRAC*TIER_KILL[tier]) * power / (arch==='shotgun' ? 1.6 : 1);
   w.bullet = Math.min(w.bullet, 55);   // nothing one-shots to the body
   w.dart = /blowgun/i.test(gun.name||'');
+  w.arrow = w.dart || /crossbow|\bbow\b|arrow/i.test(gun.name||'');
+  if(w.arrow && !w.dart){ w.kick *= 0.3; w.heat *= 0.3; }
+  w.reload = RELOAD_MS * RELOAD_TIER[tier];                      // ~2s, quicker on better guns
+  w.roundMs = (arch==='shotgun' ? 380 : 300) * RELOAD_TIER[tier];
   if(w.dart){ w.bullet = 8; w.kick *= 0.15; w.heat *= 0.2; }   // poison dart: small hit, poison does the work
   w.spread = Math.max(arch==='shotgun' ? 26 : 3, (100-acc)*0.42);        // px at 400px width
   w.burstGap = ({pistol:120, rifle:95, shotgun:260, heavy:0})[arch] ?? 60;
@@ -466,7 +472,6 @@ function weaponStats(gun){
   w.settle = ({pistol:0.03, smg:0.1, rifle:0.05, shotgun:0.04, mg:0.15, heavy:0.04})[arch];
   w.heat = ({pistol:0.45, smg:0.18, rifle:0.3, shotgun:0.8, mg:0.14, heavy:1})[arch];   // how much each round shakes your aim
   w.scope = arch==='rifle' || /sniper|barrett|sl8|psg|dsr|m82|svd|scope|aug|sa-80|enfield/i.test(gun.name||'');
-  w.roundMs = arch==='shotgun' ? 380 : 300;
   return w;
 }
 function armourStats(armour){
@@ -1181,7 +1186,7 @@ function renderSettings(){
   $('invX').checked = !!s.invX; $('invX').onchange = e=>{ s.invX=e.target.checked; save(); };
   $('motionOpts').style.display = s.mode==='motion' ? '' : 'none';
   $('modeHelp').innerHTML = s.mode==='motion'
-    ? 'Hold your phone how you\'ll aim and tap <b>READY</b> to calibrate. Then <b>holster</b> by holding the phone flat. On the bell and <b>DRAW!</b>, raise it, turn and tilt to aim, and tap anywhere to fire. Out of lead? <b>Tip the gun down</b> to reload, then raise it again. Tap a weapon slot to switch guns. Raise early and you lose the round.'
+    ? 'Hold your phone how you\'ll aim and tap <b>READY</b> to calibrate. Then <b>holster</b> by holding the phone flat. On the bell and <b>DRAW!</b>, raise it, turn and tilt to aim, and tap anywhere to fire. Out of lead? <b>Tip the gun down</b> and hold it there: it reloads by itself (about 2s). Raise it again when you hear the double click. Tap a weapon slot to switch guns. Raise early and you lose the round.'
     : 'Keep a finger held on the screen. On <b>DRAW!</b>, lift it and tap your target to shoot. Hold RELOAD to load. Lift early and you lose the round. Works on PC with a mouse.';
 }
 
@@ -1211,6 +1216,31 @@ function sfxDart(){
   const o = ac.createOscillator(); o.type='sine'; o.frequency.setValueAtTime(2400,t+0.02); o.frequency.exponentialRampToValueAtTime(1200,t+0.28);
   const g2 = ac.createGain(); g2.gain.setValueAtTime(0.0001,t); g2.gain.exponentialRampToValueAtTime(0.06,t+0.04); g2.gain.exponentialRampToValueAtTime(0.001,t+0.3);
   o.connect(g2).connect(ac.destination); o.start(t); o.stop(t+0.32);
+}
+function sfxArrow(){
+  // string twang and a bolt whooshing away
+  const ac = audio(); if(!ac) return; const t = ac.currentTime;
+  const o = ac.createOscillator(); o.type='triangle'; o.frequency.setValueAtTime(190,t); o.frequency.exponentialRampToValueAtTime(110,t+0.18);
+  const g = ac.createGain(); g.gain.setValueAtTime(0.5,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.22); o.connect(g).connect(ac.destination); o.start(t); o.stop(t+0.24);
+  const src = ac.createBufferSource(); src.buffer = noiseBuf(ac, 0.4);
+  const f = ac.createBiquadFilter(); f.type='bandpass'; f.Q.value = 4; f.frequency.setValueAtTime(1800,t); f.frequency.exponentialRampToValueAtTime(600,t+0.35);
+  const g2 = ac.createGain(); g2.gain.setValueAtTime(0.0001,t); g2.gain.exponentialRampToValueAtTime(0.35,t+0.04); g2.gain.exponentialRampToValueAtTime(0.001,t+0.36);
+  src.connect(f).connect(g2).connect(ac.destination); src.start(t);
+}
+function sfxMag(out){
+  // magazine release (out) or seating click (in)
+  const ac = audio(); if(!ac) return; const t = ac.currentTime;
+  const src = ac.createBufferSource(); src.buffer = noiseBuf(ac, 0.08);
+  const f = ac.createBiquadFilter(); f.type='bandpass'; f.Q.value = 3; f.frequency.value = out ? 900 : 2200;
+  const g = ac.createGain(); g.gain.setValueAtTime(out ? 0.5 : 0.8, t); g.gain.exponentialRampToValueAtTime(0.001, t+0.08);
+  src.connect(f).connect(g).connect(ac.destination); src.start(t);
+  if(!out){ const o = ac.createOscillator(); o.type='square'; o.frequency.value = 1300; const g2 = ac.createGain(); g2.gain.setValueAtTime(0.06,t); g2.gain.exponentialRampToValueAtTime(0.001,t+0.04); o.connect(g2).connect(ac.destination); o.start(t); o.stop(t+0.05); }
+}
+function sfxReady(){
+  // rack + a short double tick: safe to raise the gun
+  sfxRack();
+  const ac = audio(); if(!ac) return; const t = ac.currentTime + 0.22;
+  [0, 0.09].forEach(d=>{ const o = ac.createOscillator(); o.type='sine'; o.frequency.value = 1500; const g = ac.createGain(); g.gain.setValueAtTime(0.18,t+d); g.gain.exponentialRampToValueAtTime(0.001,t+d+0.07); o.connect(g).connect(ac.destination); o.start(t+d); o.stop(t+d+0.08); });
 }
 function sfxThrow(){
   const ac = audio(); if(!ac) return; const t = ac.currentTime;
@@ -1618,19 +1648,19 @@ function playerFire(sx, sy){
   if(me.reloading){ sfxClick(); return; }
   if(G.ammo<=0){
     sfxClick();
-    if(canReload(G)){ setMsg('OUT OF LEAD', D.mode==='motion' ? 'Tip the gun down, then tap' : 'Hold RELOAD', 900); return; }
+    if(canReload(G)){ setMsg('OUT OF LEAD', D.mode==='motion' ? 'Tip the gun down to reload' : 'Hold RELOAD', 900); return; }
     { const other = D.guns.some(g=>g!==G && g.ammo+g.clips+g.spare>0); setMsg('Out of ammo', other ? 'Switch weapon' : (D.temp && !D.temp.used ? 'Use your temporary' : 'Nothing left to fire'), 900); }
     return;
   }
   if(now < me.nextTurn) return;
-  const n = w.arch==='pistol' ? 1 : Math.max(1, Math.round(w.rofMin + Math.random()*(w.rofMax - w.rofMin)));
+  const n = (w.arch==='pistol' || w.arrow) ? 1 : Math.max(1, Math.round(w.rofMin + Math.random()*(w.rofMax - w.rofMin)));
   me.burst = { left: Math.min(n, G.ammo), next: now, sx, sy, G };
 }
 function fireBullet(now){
   const me = D.me, b = me.burst, G = b.G, w = G.w;
   if(G !== curGun() || G.ammo<=0 || D.roundOver){ endBurst(now, w); return; }
   G.ammo--; b.left--; me.shots++; me.lastShot = now; updateAmmoText();
-  if(w.dart) sfxDart(); else { sfxBang(!!w.splash); D.shake = Math.min(1, D.shake + w.kick*RECOIL_SCALE/50); D.flash = Math.max(D.flash, w.arch==='mg'||w.arch==='smg' ? .12 : .28); }
+  if(w.dart) sfxDart(); else if(w.arrow) sfxArrow(); else { sfxBang(!!w.splash); D.shake = Math.min(1, D.shake + w.kick*RECOIL_SCALE/50); D.flash = Math.max(D.flash, w.arch==='mg'||w.arch==='smg' ? .12 : .28); }
   const sw = sway(now), dex = me.buff.dexterity ? 0.5 : 1;
   let cx, cy;
   if(D.mode==='motion'){ cx = W/2 + sw.x; cy = H/2 + sw.y; }
@@ -1664,22 +1694,25 @@ function fireBullet(now){
 // Revolvers and tube shotguns load one round at a time; magazine guns swap a clip
 function loadsByRound(G){ return G.w.arch==='shotgun' && !/jackhammer|mag 7/i.test(G.gun.name) || /magnum|revolver|s&w|m29|derringer|blunderbuss/i.test(G.gun.name) || !G.gun.id && G.w.arch==='pistol' && false; }
 function canReload(G){ return G.ammo < G.w.mag && (G.byRound ? G.spare>0 : G.clips>0); }
+function reloadTime(G, ms){ return ms / D.myMods.dex * (D.me.buff.dexterity ? 0.5 : 1); }
 function updateReload(now, tipped){
   const me = D.me, G = curGun();
   if(D.phase!=='draw' || D.roundOver || me.burst){ me.reloading = false; return; }
-  if(!tipped){ me.reloadTap = false; if(me.reloading){ me.reloading = false; me.reloadUntil = 0; } return; }
+  if(!tipped){ if(me.reloading){ me.reloading = false; me.reloadUntil = 0; me.magOut = false; } return; }
   if(!canReload(G)){
     if(!me.reloading && G.ammo===0 && now - (me.noAmmoMsg||0) > 1500){ me.noAmmoMsg = now; setMsg('No ammo left', D.guns.some(g=>g!==G && g.ammo+g.clips+(g.spare||0)>0) ? 'Switch weapon' : 'Use your temporary', 900); }
     me.reloading = false; return;
   }
   if(!me.reloading){
-    if(D.mode==='motion' && !me.reloadTap) return;        // gun tipped down: waiting for a tap to reload
-    me.reloadTap = false; me.scoped = false;
-    me.reloading = true; me.reloadStart = now; me.reloadUntil = now + (G.byRound ? G.w.roundMs : G.w.reload) / D.myMods.dex; sfxClick();
+    // tipping the gun down reloads automatically (only if the gun isn't already full)
+    me.scoped = false;
+    me.reloading = true; me.reloadStart = now; me.reloadUntil = now + reloadTime(G, G.byRound ? G.w.roundMs : G.w.reload);
+    me.magIn = false; if(!G.byRound){ sfxMag(true); me.magOut = true; } else sfxClick();
   }
+  if(!G.byRound && !me.magIn && now >= me.reloadStart + (me.reloadUntil - me.reloadStart)*0.7){ me.magIn = true; sfxMag(false); }
   if(now >= me.reloadUntil){
-    if(G.byRound){ G.ammo++; G.spare--; sfxRack(); me.reloadStart = now; me.reloadUntil = canReload(G) ? now + G.w.roundMs / D.myMods.dex : 0; if(!me.reloadUntil) me.reloading = false; }
-    else { G.ammo = G.w.mag; G.clips--; sfxRack(); me.reloading = false; me.reloadUntil = 0; }
+    if(G.byRound){ G.ammo++; G.spare--; sfxMag(false); me.reloadStart = now; me.reloadUntil = canReload(G) ? now + reloadTime(G, G.w.roundMs) : 0; if(!me.reloadUntil){ me.reloading = false; sfxReady(); buzz([40,60,40]); } }
+    else { G.ammo = G.w.mag; G.clips--; sfxReady(); buzz([40,60,40]); me.reloading = false; me.reloadUntil = 0; me.magOut = false; }
     renderDSlots();
   }
 }
@@ -2573,13 +2606,13 @@ function drawReloadView(c, now){
     if(me.reloading && k > 0.72 && k < 0.8){ c.fillStyle='rgba(255,235,150,.75)'; c.beginPath(); c.arc(mx+geo.mw/2, my, L*0.035, 0, 7); c.fill(); }
     if(me.reloading && k > 0.8){ const sk = myLook.gloves ? myLook.gloves.color : myLook.skin; c.fillStyle = sk; c.beginPath(); c.ellipse(gx + geo.cx - rack*L*0.08, gy + geo.cy, L*0.05, L*0.04, 0, 0, 7); c.fill(); }
     c.fillStyle='#fff'; c.font=`bold ${Math.max(13,H*0.02)|0}px Arial`; c.textAlign='center'; c.textBaseline='alphabetic';
-    const stage = !me.reloading ? (canReload(G) ? (D.mode==='motion' ? 'TAP TO RELOAD' : '') : 'NO CLIPS LEFT') : k < 0.25 ? 'DROP MAG…' : k < 0.75 ? 'NEW MAG IN…' : 'RACK IT!';
+    const stage = !me.reloading ? (G.ammo>=G.w.mag ? 'LOADED' : canReload(G) ? '' : 'NO CLIPS LEFT') : k < 0.25 ? 'DROP MAG…' : k < 0.75 ? 'NEW MAG IN…' : 'RACK IT!';
     c.fillText(stage, cx, gy - L*0.18);
     c.font=`${Math.max(11,H*0.016)|0}px Arial`; c.fillStyle='rgba(255,255,255,.75)'; c.fillText(G.gun.name, cx, gy - L*0.18 - 20);
   }
   c.fillStyle='#fff'; c.font=`bold ${Math.max(14,H*0.022)|0}px Arial`; c.textAlign='center'; c.textBaseline='middle';
   c.fillText(`${ammoText(G)}`, cx, cy + R + 22);
-  if(D.mode==='motion') { c.font=`${Math.max(12,H*0.018)|0}px Arial`; c.fillStyle='rgba(255,255,255,.8)'; c.fillText(me.reloading ? 'Raise the gun to keep shooting' : (canReload(G) ? 'Tap anywhere to reload' : 'Raise the gun'), cx, cy + R + 44); }
+  if(D.mode==='motion') { c.font=`${Math.max(12,H*0.018)|0}px Arial`; c.fillStyle='rgba(255,255,255,.8)'; if(!me.reloading && G.ammo>=G.w.mag){ c.fillStyle='#9bdc4a'; c.font=`bold ${Math.max(13,H*0.02)|0}px Arial`; } c.fillText(me.reloading ? 'Keep it down… wait for the double click' : (G.ammo>=G.w.mag ? 'Loaded: raise the gun!' : 'Raise the gun'), cx, cy + R + 44); }
 }
 
 function drawPlayerView(c, now){
@@ -2646,7 +2679,7 @@ function drawHUD(c, now){
     c.fillText(`${Math.floor(sec/60)}:${String(sec%60).padStart(2,'0')}`, W/2, top + 110); c.shadowOffsetY=0; }
   // reload / switching
   const me = D.me, G = curGun();
-  if(D.phase==='draw' && me.drawnAt!=null && !me.reloading && G.ammo===0 && canReload(G)){ centerTag(c, D.mode==='motion' ? 'OUT OF LEAD — TIP DOWN & TAP' : 'OUT OF LEAD — HOLD RELOAD', H*0.4, '#ff6a4a'); }
+  if(D.phase==='draw' && me.drawnAt!=null && !me.reloading && G.ammo===0 && canReload(G)){ centerTag(c, D.mode==='motion' ? 'OUT OF LEAD — TIP DOWN TO RELOAD' : 'OUT OF LEAD — HOLD RELOAD', H*0.4, '#ff6a4a'); }
   else if(D.phase==='draw' && me.drawnAt!=null && now < me.readyAt && me.switchAt){ centerTag(c, 'SWITCHING', H*0.62, '#ddd'); }
   // messages (Torn attack-screen style box)
   if(now < D.msgT && D.msg){
@@ -2737,7 +2770,7 @@ cv.addEventListener('pointerdown', e=>{
   D.pointerDown = true;
   if(D.mode==='motion'){
     // gun tipped down = tap reloads instead of firing
-    if(D.phase==='draw' && D.me.drawnAt!=null && (pitchNow() ?? 90) < 32){ D.me.reloadTap = true; return; }
+    if(D.phase==='draw' && D.me.drawnAt!=null && (pitchNow() ?? 90) < 32) return;   // tipped down: reloading, not firing
     playerFire(); return;
   }
   if(D.phase==='draw') playerFire(e.clientX, e.clientY);

@@ -248,7 +248,7 @@ const RECOIL_SCALE = 0.2; // overall recoil strength
 // NPC damage per body hit, as % of your health (High Duel: a hit takes ~20-25%)
 const AI_DMG = {pistol:21, smg:8, rifle:25, shotgun:4.5, mg:6.5, heavy:38};
 const ROUND_MS = 180000;     // 3 minute round timer
-const RELOAD_MS = 2000;      // standard magazine reload
+const RELOAD_MS = 1500;      // standard magazine reload
 const RELOAD_TIER = {D:1.2, C:1.1, B:1, A:0.9, S:0.8};
 const KILL_FRAC = 0.4; 
 const TIER_KILL = {D:1.25, C:1.12, B:1, A:0.88, S:0.75};   // share of ammo needed vs KILL_FRAC: S-tier guns kill with ~30%, D-tier ~50%
@@ -797,7 +797,11 @@ function drawFigure(c, L, P){
     // Torn-style A-pose when relaxed
     let hx = side*(P.apose ? 76 : 52)*B, hy = P.apose ? -148 : -128;
     if(!P.apose && k < 0.5 && mv > 0.05){ const sw2 = Math.sin(ph + (side>0 ? Math.PI : 0)); hx += side*sw2*4*mv; hy += -Math.abs(sw2)*5*mv; }
-    if(gunSide){ hx = hx + (10 - hx)*k; hy = hy + (-206 - hy)*k; }
+    if(P.reload!=null){ const r = P.reload;
+      if(gunSide){ hx = 16*B; hy = -176; }                                                       // gun held low at the waist, tilted
+      else { const u = r < 0.45 ? r/0.45 : r < 0.7 ? 1 : 1 - (r-0.7)/0.3;                       // off hand: pouch -> magwell -> slide
+        const px = -30*B, py = -160, mx = 10*B, my = -170; hx = px + (mx - px)*u; hy = py + (my - py)*u; if(r > 0.7){ hx = mx + 6; hy = -186 + (r-0.7)*40; } } }
+    else if(gunSide){ hx = hx + (10 - hx)*k; hy = hy + (-206 - hy)*k; }
     else if(P.throwK!=null){ const t = P.throwK;
       if(t < 0.6){ const u = t/0.6; hx = hx + (-38*B - hx)*u; hy = hy + (-312 - hy)*u; }           // wind up over the shoulder
       else { const u = (t-0.6)/0.4; hx = -38*B + (2 + 38*B)*u; hy = -312 + (-232 + 312)*u; } }     // release towards you
@@ -810,7 +814,8 @@ function drawFigure(c, L, P){
     if(shortSleeve){ const mxp = sx + (ex-sx)*0.55, myp = sy + (ey-sy)*0.55; muscleLimb(c, [[sx,sy+2],[mxp,myp]], [24*B, 21*B], shortSleeve); }
     muscleLimb(c, [[ex,ey],[fmx,fmy],[hx,hy]], [15*B, 16*B, 11*B], sleeve || skin);
     // gun in hand
-    if(gunSide && P.gunLen && k>0.02){
+    if(gunSide && P.gunLen && P.reload!=null){ c.save(); c.translate(hx,hy); c.rotate(0.35); c.fillStyle='#1b1b1b'; c.fillRect(-4,-3,P.gunLen,8); c.fillRect(-2,3,7,13); c.restore(); }
+    else if(gunSide && P.gunLen && k>0.02){
       c.save(); c.translate(hx,hy);
       if(k < 0.75){ c.rotate(1.2 - k*1.6); c.fillStyle='#1b1b1b'; c.fillRect(-4,-3,P.gunLen,8); c.fillRect(-2,3,7,13); }
       else {
@@ -822,6 +827,7 @@ function drawFigure(c, L, P){
     }
     handShape(c, hx, hy, Math.atan2(hy-ey, hx-ex) - Math.PI/2, glove, B);
     if(!gunSide && P.throwItem) P.throwItem(c, hx, hy);
+    if(!gunSide && P.reload!=null && P.reload < 0.6){ c.fillStyle='#222'; c.save(); c.translate(hx, hy+4); c.rotate(-0.15); c.fillRect(-3,-2,7,16); c.fillStyle='#a08040'; c.fillRect(-2,-4,5,3); c.restore(); }
   }
   // poncho over shoulders and arms
   if(L.poncho){
@@ -1118,7 +1124,8 @@ function npcThumb(o){
 // Opponent weapon: archetype defaults, or the exact gun when the NPC copies your kit
 function oppWeapon(opp){
   const ow = Object.assign({}, ARCH[opp.weapon]); ow.dmgMul = 1;
-  if(opp.gun){ const w = weaponStats(opp.gun), ref = weaponStats({arch: w.arch, name:''});
+  ow.reload = RELOAD_MS * (opp.weapon==='heavy' ? 1.3 : 1);
+  if(opp.gun){ const w = weaponStats(opp.gun), ref = weaponStats({arch: w.arch, name:''}); ow.reload = w.reload;
     ow.mag = w.mag; ow.dmgMul = clamp(w.bullet / ref.bullet, 0.5, 2); ow.name = opp.gun.name; }
   return ow;
 }
@@ -1186,7 +1193,7 @@ function renderSettings(){
   $('invX').checked = !!s.invX; $('invX').onchange = e=>{ s.invX=e.target.checked; save(); };
   $('motionOpts').style.display = s.mode==='motion' ? '' : 'none';
   $('modeHelp').innerHTML = s.mode==='motion'
-    ? 'Hold your phone how you\'ll aim and tap <b>READY</b> to calibrate. Then <b>holster</b> by holding the phone flat. On the bell and <b>DRAW!</b>, raise it, turn and tilt to aim, and tap anywhere to fire. Out of lead? <b>Tip the gun down</b> and hold it there: it reloads by itself (about 2s). Raise it again when you hear the double click. Tap a weapon slot to switch guns. Raise early and you lose the round.'
+    ? 'Hold your phone how you\'ll aim and tap <b>READY</b> to calibrate. Then <b>holster</b> by holding the phone flat. On the bell and <b>DRAW!</b>, raise it, turn and tilt to aim, and tap anywhere to fire. Out of lead? <b>Tip the gun down</b> and hold it there: it reloads by itself (about 2s). Raise it again when you hear the ding. Tap a weapon slot to switch guns. Raise early and you lose the round.'
     : 'Keep a finger held on the screen. On <b>DRAW!</b>, lift it and tap your target to shoot. Hold RELOAD to load. Lift early and you lose the round. Works on PC with a mouse.';
 }
 
@@ -1240,7 +1247,8 @@ function sfxReady(){
   // rack + a short double tick: safe to raise the gun
   sfxRack();
   const ac = audio(); if(!ac) return; const t = ac.currentTime + 0.22;
-  [0, 0.09].forEach(d=>{ const o = ac.createOscillator(); o.type='sine'; o.frequency.value = 1500; const g = ac.createGain(); g.gain.setValueAtTime(0.18,t+d); g.gain.exponentialRampToValueAtTime(0.001,t+d+0.07); o.connect(g).connect(ac.destination); o.start(t+d); o.stop(t+d+0.08); });
+  // bright ding: safe to lift the phone
+  [[1568,0.32],[3136,0.1],[4704,0.04]].forEach(([fr,v])=>{ const o = ac.createOscillator(); o.type='sine'; o.frequency.value = fr; const g = ac.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(v,t+0.01); g.gain.exponentialRampToValueAtTime(0.001,t+0.7); o.connect(g).connect(ac.destination); o.start(t); o.stop(t+0.72); });
 }
 function sfxThrow(){
   const ac = audio(); if(!ac) return; const t = ac.currentTime;
@@ -1443,7 +1451,7 @@ function newRound(){
   renderDSlots();
   D.op = { hp:100, ammo:D.oppW.mag, clips:SPARE_CLIPS, state:'idle', stateT:0, nextShot:Infinity, dead:false, deadT:0, flinchUntil:0,
            x:0, tx:0, v:0, walk:0, lastFire:0, eff:{} };
-  D.holes = []; D.particles = []; D.roundOver=false; D.result=null;
+  D.holes = []; D.particles = []; D.splats = []; D.meDeadT = null; D.roundOver=false; D.result=null;
   setMsg(D.round===1 ? D.opp.name : `Round ${D.round}`, D.phase==='ready' ? 'Hold your phone comfortably, then tap READY' : (D.mode==='motion' ? 'Holster: hold your phone flat' : 'Hold your finger on the screen'), 99999);
   // cover position for this round
   D.props = placeProps();
@@ -1607,6 +1615,7 @@ function kneelAI(now, dt){
 }
 function strafe(now, dt){
   const op = D.op, tier = D.opp.stars || 1, sp = aiSpeeds(), mod = oppMod('move', now);
+  if(now < (op.reloadUntil||0)){ op.v *= Math.pow(0.02, dt/1000); op.walk += Math.abs(op.v)*dt*0.05; if(op.mode==='hide'){ op.mode='hold'; } return; }   // stands still while reloading
   if(op.state==='waiting' || op.state==='idle'){ op.v *= 0.85; op.walk += Math.abs(op.v)*dt*0.05; return; }
   if(!op.mode || op.mode==='idle') aiPick(now);
   let want = 0;
@@ -1633,6 +1642,7 @@ function strafe(now, dt){
 function foul(text){ D.me.reaction = null; finishRound('lose', text, performance.now(), true); }
 function finishRound(res, why, now, foulFlag){
   if(D.roundOver) return;
+  if(res==='lose' && D.me.hp<=0 && !D.meDeadT) D.meDeadT = now;
   D.roundOver = true; D.result = res; D.phase='over';
   if(res!=='draw') D.score[res==='win'?0:1]++;
   D.rounds.push({res, why, reaction:D.me.reaction??null, shots:D.me.shots, hits:D.me.hits, foul:!!foulFlag, hpLeft: Math.max(0, D.me.hp)/100*D.myMax});
@@ -1678,7 +1688,7 @@ function fireBullet(now){
     const px = cx + Math.cos(a)*r, py = cy + Math.sin(a)*r;
     const z = hitTest(px, py), wp = toWorld(px, py);
     if(z==='cover'){ puff(wp.x,wp.y,'#ffd27a'); continue; }
-    if(z){ total += per * ZONE_MULT[z]; if(!best || ZONE_MULT[z]>ZONE_MULT[best]) best=z; puff(wp.x,wp.y,'#a0201a'); }
+    if(z){ total += per * ZONE_MULT[z]; if(!best || ZONE_MULT[z]>ZONE_MULT[best]) best=z; bleed(wp.x, wp.y, per * ZONE_MULT[z], now); }
     else { D.holes.push(wp); if(D.holes.length>120) D.holes.shift(); puff(wp.x,wp.y,'#8a8a8a'); }
   }
   if(!total && w.splash){
@@ -1840,6 +1850,23 @@ function drawTempItem(c, info, img, sz){
   else drawTempShape(c, info, sz);
 }
 // incoming temp flying from the opponent towards you (world space, inside the camera transform)
+// blood on your screen when you're hit
+function screenBlood(dmg){ const n = 2 + Math.round(Math.min(5, dmg/6)); for(let i=0;i<n;i++){ const edge = Math.random();
+  (D.scrBlood = D.scrBlood || []).push({x: edge<0.5 ? (Math.random()<0.5 ? Math.random()*W*0.25 : W - Math.random()*W*0.25) : Math.random()*W, y: edge<0.5 ? Math.random()*H : (Math.random()<0.5 ? Math.random()*H*0.2 : H - Math.random()*H*0.25), r: 8 + Math.random()*26, t0: performance.now(), seed: Math.random()*99}); } }
+function drawScreenBlood(c, now){
+  if(!D.scrBlood) return; D.scrBlood = D.scrBlood.filter(b=> now - b.t0 < 2600);
+  for(const b of D.scrBlood){ const k = (now - b.t0)/2600, a = 0.75*(1 - k*k), run = Math.min(1, (now - b.t0)/1500);
+    c.fillStyle = `rgba(110,4,8,${a})`; c.beginPath(); c.arc(b.x, b.y, b.r, 0, 7); c.fill();
+    for(let j=0;j<5;j++){ const an = b.seed + j*1.3; c.beginPath(); c.arc(b.x + Math.cos(an)*b.r*1.2, b.y + Math.sin(an)*b.r*1.2, b.r*0.25, 0, 7); c.fill(); }
+    c.fillRect(b.x - b.r*0.15, b.y, b.r*0.3, b.r*3*run); }
+}
+function drawHospitalized(c, now){
+  const k = clamp((now - D.meDeadT)/900, 0, 1), k2 = clamp((now - D.meDeadT - 700)/900, 0, 1);
+  const g = c.createRadialGradient(W/2,H/2,H*0.15,W/2,H/2,H*0.8); g.addColorStop(0,`rgba(120,0,0,${0.25*k})`); g.addColorStop(1,`rgba(40,0,0,${0.85*k})`); c.fillStyle = g; c.fillRect(0,0,W,H);
+  c.fillStyle = `rgba(0,0,0,${0.45*k2})`; c.fillRect(0,0,W,H);
+  if(k2>0){ c.globalAlpha = k2; c.textAlign='center'; c.textBaseline='middle'; c.fillStyle='#e0402a'; c.font=`900 ${Math.min(42, W*0.1)|0}px 'Arial Black',Arial`; c.fillText('HOSPITALIZED', W/2, H*0.5);
+    c.fillStyle='#ddd'; c.font=`bold ${Math.max(13, W*0.035)|0}px Arial`; c.fillText(`Put in hospital by ${D.opp.name}`, W/2, H*0.5 + Math.min(42, W*0.1)*0.9); c.globalAlpha = 1; }
+}
 function drawIncoming(c, now){
   const I = D.incoming; if(!I) return;
   const cam = camera(), k = clamp((now - I.t0)/I.dur, 0, 1), tx = W*0.5 + cam.x, ty = H*0.78 + cam.y;
@@ -1867,6 +1894,36 @@ function sway(now){
   const hf = 1 + (me.heat||0)*1.5;
   return { x: (Math.sin(t*1.7*hf)+0.5*Math.sin(t*4.3*hf+1))*A, y: (Math.cos(t*1.3*hf)+0.5*Math.sin(t*3.7*hf))*A };
 }
+// Blood: spray, mist, a wound on the body and drops on the street
+function bleed(x, y, amt, now){
+  const g = oppGeom(), op = D.op, n = Math.round(clamp(6 + amt*0.9, 6, 26)), su = g.h/300;
+  for(let i=0;i<n;i++){ const a = -Math.PI/2 + (Math.random()-0.5)*2.6, sp = (0.05 + Math.random()*0.22) * su * 3;
+    D.particles.push({x, y, vx: Math.cos(a)*sp + (x - g.x)*0.0006, vy: Math.sin(a)*sp, t:0, life: 450 + Math.random()*500, c: Math.random()<0.5 ? '#8a0c0c' : '#b0161a', r: (1 + Math.random()*2.6) * Math.max(0.8, su*3), blood:true}); }
+  (D.fx = D.fx || []).push({type:'mist', x, y, t0: now, dur: 380, r: g.h*(0.05 + Math.min(0.08, amt*0.004))});
+  // wound stays on the body, in the figure's own coordinates
+  const ly = (y - (g.feet + (op.crouch||0)*crouchDepth()*g.u)) / (1 - 0.38*(op.kneel||0));
+  (op.wounds = op.wounds || []).push({fx: (x - g.x)/g.u, fy: ly/g.u, r: 3 + Math.random()*3 + Math.min(4, amt*0.25), t0: now});
+  if(op.wounds.length > 16) op.wounds.shift();
+  // drops land on the street round their feet
+  const drops = 2 + Math.round(Math.min(6, amt*0.3));
+  for(let i=0;i<drops;i++) (D.splats = D.splats || []).push({x: x + (Math.random()-0.5)*g.h*0.3, y: g.feet + (Math.random()-0.2)*g.h*0.04, r: g.h*(0.006 + Math.random()*0.02), a: 0.55 + Math.random()*0.35, sx: 1 + Math.random()*1.5});
+  if(D.splats.length > 120) D.splats.splice(0, D.splats.length - 120);
+}
+function drawSplats(c){
+  for(const s of D.splats||[]){ c.fillStyle = `rgba(90,6,8,${s.a})`; c.beginPath(); c.ellipse(s.x, s.y, s.r*s.sx, s.r*0.38, 0, 0, 7); c.fill(); }
+  const op = D.op, g = oppGeom();
+  if(op.dead && op.deadT){ const k = clamp((performance.now() - op.deadT - 600)/2500, 0, 1); if(k>0){ const side = op.fallSide||1, px = g.x - side*g.h*0.45;
+    const gr = c.createRadialGradient(px, g.feet, 0, px, g.feet, g.h*0.35*k); gr.addColorStop(0,'rgba(80,4,6,.85)'); gr.addColorStop(0.8,'rgba(90,6,8,.6)'); gr.addColorStop(1,'rgba(90,6,8,0)');
+    c.fillStyle = gr; c.beginPath(); c.ellipse(px, g.feet + g.h*0.01, g.h*0.35*k, g.h*0.06*k, 0, 0, 7); c.fill(); } }
+}
+function drawWounds(c, now){
+  const op = D.op; if(!op.wounds || !op.wounds.length) return;
+  const g = oppGeom(), u = g.u;
+  for(const w of op.wounds){ const x = w.fx*u, y = w.fy*u, r = w.r*u, drip = Math.min(1, (now - w.t0)/1800);
+    c.fillStyle = 'rgba(70,0,4,.9)'; c.beginPath(); c.ellipse(x, y, r, r*0.85, 0, 0, 7); c.fill();
+    c.fillStyle = 'rgba(150,10,14,.85)'; c.beginPath(); c.ellipse(x - r*0.2, y - r*0.2, r*0.55, r*0.45, 0, 0, 7); c.fill();
+    c.strokeStyle = 'rgba(120,6,10,.8)'; c.lineWidth = r*0.45; c.lineCap='round'; c.beginPath(); c.moveTo(x, y); c.lineTo(x + r*0.2, y + r*(1 + drip*5)); c.stroke(); }
+}
 function puff(x,y,c){ for(let i=0;i<6;i++) D.particles.push({x,y,vx:(Math.random()-0.5)*0.15,vy:-Math.random()*0.15,t:0,life:400+Math.random()*300,c,r:1.5+Math.random()*2.5}); }
 
 /* ---------- AI shooting ---------- */
@@ -1874,7 +1931,7 @@ function puff(x,y,c){ for(let i=0;i<6;i++) D.particles.push({x,y,vx:(Math.random
 function aiShoot(now){
   const op = D.op, ow = D.oppW;
   if(op.eff.blinded && now < op.eff.blinded.start + EFFECTS.blinded.hold){ op.nextShot = op.eff.blinded.start + EFFECTS.blinded.hold + 100; return; }
-  if(op.ammo<=0){ if(op.clips>0){ op.clips--; op.ammo = ow.mag; op.nextShot = now + ow.reload / D.opMods.dex; } else op.nextShot = Infinity; return; }
+  if(op.ammo<=0){ if(op.clips>0){ op.clips--; const rl = ow.reload / D.opMods.dex; op.reloadStart = now; op.reloadUntil = now + rl; op.ammo = ow.mag; op.nextShot = now + rl + 150; sfxMag(true); } else op.nextShot = Infinity; return; }
   const tier = D.opp.stars || 1;
   op.burstLeft = ({smg:3, mg:5})[D.opp.weapon] || 1; op.burstNext = now;
   op.nextShot = now + (2300 - (tier-1)*270) * (0.75 + Math.random()*0.5) * oppMod('pace', now) * (D.opBuff.speed ? 0.5 : 1);
@@ -1898,7 +1955,8 @@ function aiBullet(now){
   if(dmg>0){
     dmg *= (1 - D.armour.reduce) * (me.buff.defense ? 0.5 : 1) * D.opMods.str / D.myMods.def;
     dmg /= MATCH_LEN; me.hp -= dmg; me.hurt = Math.min(1, me.hurt + dmg*MATCH_LEN/60); D.hurtFlash = 1; D.shake = 1; buzz(80); sfxHit();
-    if(me.hp<=0) finishRound('lose', zone==='head' ? `${D.opp.name} landed a headshot` : `${D.opp.name} was quicker`, now);
+    if(me.hp<=0){ D.meDeadT = now; finishRound('lose', zone==='head' ? `${D.opp.name} landed a headshot` : `${D.opp.name} was quicker`, now); }
+    else screenBlood(dmg);
   }
 }
 
@@ -2188,14 +2246,16 @@ function buildBackground(){
    ========================================================= */
 function render(now){
   const c = ctx;
+  if(!D || !D.me || !D.op) return;
   c.setTransform(DPR,0,0,DPR,0,0);
   const cam = camera(), sh = D.shake*8;
   const ox = -cam.x + (Math.random()-0.5)*sh, oy = -cam.y + (Math.random()-0.5)*sh;
-  const Z = zoomNow();
-  c.save(); c.translate(W/2, H/2); c.scale(Z, Z); c.translate(-W/2, -H/2); c.translate(ox, oy);
+  const Z = zoomNow(), dk = D.meDeadT ? clamp((now - D.meDeadT)/900, 0, 1) : 0, dk2 = dk*dk;
+  c.save(); c.translate(W/2, H/2); if(dk){ c.translate(W*0.08*dk2, H*0.42*dk2); c.rotate(0.55*dk2); } c.scale(Z, Z); c.translate(-W/2, -H/2); c.translate(ox, oy);
   const pep = now < D.me.pepperUntil;
   if(pep) c.filter = 'blur(3px)';
   if(BG) c.drawImage(BG.cv, -W, -H, W*3, H*2.8);
+  drawSplats(c);
   drawOpponent(c, now);
   drawCover(c, now);
   drawEffects(c, now);
@@ -2206,7 +2266,7 @@ function render(now){
   c.globalAlpha = 1;
   c.filter = 'none';
   c.restore();
-  if(D.me.scoped) drawScope(c, now); else drawPlayerView(c, now);
+  if(D.meDeadT){ /* gun dropped */ } else if(D.me.scoped) drawScope(c, now); else drawPlayerView(c, now);
   drawThrowHand(c, now);
   // effects on you
   const me = D.me;
@@ -2217,6 +2277,8 @@ function render(now){
     else { const rgb = me.hazeType==='gassed' ? [190,200,110] : [175,175,180]; c.fillStyle = `rgba(${rgb},${0.28*a})`; c.fillRect(0,0,W,H); cloud(c, W*0.3, H*0.65, H*0.35, rgb, 0.55*a, now); cloud(c, W*0.75, H*0.45, H*0.32, rgb, 0.5*a, now+900); cloud(c, W*0.5, H*0.9, H*0.3, rgb, 0.5*a, now+400); } }
   if(now < (D.boomUntil||0)){ const k = (D.boomUntil - now)/700, g2 = c.createRadialGradient(W/2,H*0.8,0,W/2,H*0.8,H*0.8); g2.addColorStop(0,`rgba(255,235,170,${0.9*k})`); g2.addColorStop(0.4,`rgba(255,130,30,${0.6*k})`); g2.addColorStop(1,'rgba(60,20,0,0)'); c.fillStyle=g2; c.fillRect(0,0,W,H); }
   if(now < me.flashUntil){ const k = (me.flashUntil - now)/3200; c.fillStyle = `rgba(255,255,255,${Math.min(0.97, k*1.15)})`; c.fillRect(0,0,W,H); }
+  drawScreenBlood(c, now);
+  if(D.meDeadT) drawHospitalized(c, now);
   drawHUD(c, now);
   if(D.flash>0.02){ c.fillStyle=`rgba(255,240,220,${D.flash*0.3})`; c.fillRect(0,0,W,H); }
   if(D.hurtFlash>0.02){ const g=c.createRadialGradient(W/2,H/2,H*0.2,W/2,H/2,H*0.75); g.addColorStop(0,'rgba(160,0,0,0)'); g.addColorStop(1,`rgba(160,0,0,${D.hurtFlash*0.7})`); c.fillStyle=g; c.fillRect(0,0,W,H); }
@@ -2228,10 +2290,14 @@ function drawOpponent(c, now){
   // shadow
   c.fillStyle='rgba(0,0,0,.4)'; c.beginPath(); c.ellipse(g.x, g.feet, g.h*0.17, g.h*0.03, 0, 0, 7); c.fill();
   // clip at the street line so a crouching opponent never shows below the ground
-  c.save(); c.beginPath(); c.rect(g.x - g.h, g.feet - g.h*1.6, g.h*2, g.h*1.6 + g.u*3); c.clip();
+  c.save(); c.beginPath(); c.rect(g.x - g.h*1.3, g.feet - g.h*1.6, g.h*2.6, g.h*1.6 + g.u*(op.dead ? 40 : 3)); c.clip();
   c.save(); c.translate(g.x, g.feet + (op.crouch||0)*crouchDepth()*g.u);
   c.scale(1, 1 - 0.38*(op.kneel||0));
-  if(op.dead){ const k = Math.min(1,(now-op.deadT)/700); c.rotate(-k*0.3); c.scale(1+k*0.12, 1-k*0.72); c.globalAlpha = 1 - k*0.3; }
+  if(op.dead){ const t = now - op.deadT, side = op.fallSide || (op.fallSide = Math.random()<0.5 ? -1 : 1);
+    const buckle = clamp(t/260, 0, 1), fall = clamp((t-200)/520, 0, 1), f2 = fall*fall, bounce = t > 720 ? Math.sin(clamp((t-720)/220,0,1)*Math.PI)*0.05 : 0;
+    c.translate(0, g.u*28*buckle*(1-fall));            // knees go
+    c.rotate(-side*(Math.PI/2 - bounce)*f2);            // topples over
+    c.translate(0, -g.u*38*f2); c.scale(1, 1 - 0.12*buckle*(1-fall)); }
   else if(now < op.flinchUntil) c.rotate(-0.06);
   let aim = 0;
   if(op.state==='drawing') aim = clamp((now - op.stateT)/D.oppW.draw, 0, 1)*0.9;
@@ -2242,7 +2308,10 @@ function drawOpponent(c, now){
   if(op.mode==='move' && op.running && aim > 0.5) aim = 0.4;   // gun lowered while running
   const TK = D.opThrow && !D.opThrow.released ? clamp((now - D.opThrow.t0)/520, 0, 1) : (D.incoming && now - D.incoming.t0 < 200 ? 1 : null);
   const TI = D.opThrow ? D.opThrow : null;
-  drawFigureLit(c, o.look, { throwK: TK, throwItem: TI && TK!=null && TK < 0.85 ? ((cc,hx,hy)=>{ cc.save(); cc.translate(hx, hy-6); if(TI.info.kind==='self'){ cc.fillStyle='#ddd'; cc.fillRect(-2,-16,4,22); cc.fillStyle='#7ad04a'; cc.fillRect(-2,-10,4,10); } else drawTempItem(cc, TI.info, TI.img, 22); cc.restore(); }) : null, aim: TK!=null ? Math.min(aim, 0.3) : aim, move: mvAmt, lean, apose: (op.state==='idle' || op.state==='waiting') && !op.hiding, walk: op.walk + idle, gunLen: D.oppW.len, twoHand: ['rifle','shotgun','mg','smg','heavy'].includes(o.weapon), flash: now - op.lastFire < 70 }, 0, 0, g.u, {key:'opp', tint:'rgba(40,30,70,.12)'});
+  const RL = now < (op.reloadUntil||0) && !op.dead ? clamp((now - op.reloadStart)/(op.reloadUntil - op.reloadStart), 0, 1) : null;
+  if(RL!=null) aim = 0;
+  drawFigureLit(c, o.look, { reload: RL, throwK: TK, throwItem: TI && TK!=null && TK < 0.85 ? ((cc,hx,hy)=>{ cc.save(); cc.translate(hx, hy-6); if(TI.info.kind==='self'){ cc.fillStyle='#ddd'; cc.fillRect(-2,-16,4,22); cc.fillStyle='#7ad04a'; cc.fillRect(-2,-10,4,10); } else drawTempItem(cc, TI.info, TI.img, 22); cc.restore(); }) : null, aim: TK!=null ? Math.min(aim, 0.3) : aim, move: mvAmt, lean, apose: (op.state==='idle' || op.state==='waiting') && !op.hiding, walk: op.walk + idle, gunLen: D.oppW.len, twoHand: ['rifle','shotgun','mg','smg','heavy'].includes(o.weapon), flash: now - op.lastFire < 70 }, 0, 0, g.u, {key:'opp', tint:'rgba(40,30,70,.12)'});
+  drawWounds(c, now);
   c.restore(); c.restore();
   if(D.phase==='steady' || D.phase==='holster'){
     c.font=`bold ${Math.max(12,H*0.018)|0}px Arial`; c.textAlign='center'; c.textBaseline='alphabetic';
@@ -2470,6 +2539,8 @@ function drawEffects(c, now){
       cloud(c, f.x, f.y - g.h*0.2, g.h*(0.3+k*0.5), f.type==='gas' ? [200,210,120] : [170,170,175], 0.55*(1-k*0.4), now);
     } else if(f.type==='fire'){
       flames(c, f.x, f.y, g.h*0.25, 1-k, now);
+    } else if(f.type==='mist'){
+      const r = f.r*(1 + k*1.6), gr = c.createRadialGradient(f.x,f.y,0,f.x,f.y,r); gr.addColorStop(0,`rgba(170,10,14,${0.55*(1-k)})`); gr.addColorStop(1,'rgba(170,10,14,0)'); c.fillStyle = gr; c.beginPath(); c.arc(f.x,f.y,r,0,7); c.fill();
     } else if(f.type==='thud'){
       c.fillStyle = `rgba(160,160,160,${1-k})`; c.beginPath(); c.arc(f.x,f.y,6+k*10,0,7); c.fill();
     }
@@ -2613,7 +2684,7 @@ function drawReloadView(c, now){
   }
   c.fillStyle='#fff'; c.font=`bold ${Math.max(14,H*0.022)|0}px Arial`; c.textAlign='center'; c.textBaseline='middle';
   c.fillText(`${ammoText(G)}`, cx, cy + R + 22);
-  if(D.mode==='motion') { c.font=`${Math.max(12,H*0.018)|0}px Arial`; c.fillStyle='rgba(255,255,255,.8)'; if(!me.reloading && G.ammo>=G.w.mag){ c.fillStyle='#9bdc4a'; c.font=`bold ${Math.max(13,H*0.02)|0}px Arial`; } c.fillText(me.reloading ? 'Keep it down… wait for the double click' : (G.ammo>=G.w.mag ? 'Loaded: raise the gun!' : 'Raise the gun'), cx, cy + R + 44); }
+  if(D.mode==='motion') { c.font=`${Math.max(12,H*0.018)|0}px Arial`; c.fillStyle='rgba(255,255,255,.8)'; if(!me.reloading && G.ammo>=G.w.mag){ c.fillStyle='#9bdc4a'; c.font=`bold ${Math.max(13,H*0.02)|0}px Arial`; } c.fillText(me.reloading ? 'Keep it down… wait for the ding' : (G.ammo>=G.w.mag ? 'Loaded: raise the gun!' : 'Raise the gun'), cx, cy + R + 44); }
 }
 
 function drawPlayerView(c, now){

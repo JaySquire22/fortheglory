@@ -453,6 +453,8 @@ function weaponStats(gun){
   w.tier = tier;
   w.bullet = 100/(ammoTot*KILL_FRAC*TIER_KILL[tier]) * power / (arch==='shotgun' ? 1.6 : 1);
   w.bullet = Math.min(w.bullet, 55);   // nothing one-shots to the body
+  w.dart = /blowgun/i.test(gun.name||'');
+  if(w.dart){ w.bullet = 8; w.kick *= 0.15; w.heat *= 0.2; }   // poison dart: small hit, poison does the work
   w.spread = Math.max(arch==='shotgun' ? 26 : 3, (100-acc)*0.42);        // px at 400px width
   w.burstGap = ({pistol:120, rifle:95, shotgun:260, heavy:0})[arch] ?? 60;
   w.recoil = ({pistol:14, rifle:11, shotgun:30, smg:4.5, mg:3.5, heavy:50})[arch];
@@ -791,6 +793,9 @@ function drawFigure(c, L, P){
     let hx = side*(P.apose ? 76 : 52)*B, hy = P.apose ? -148 : -128;
     if(!P.apose && k < 0.5 && mv > 0.05){ const sw2 = Math.sin(ph + (side>0 ? Math.PI : 0)); hx += side*sw2*4*mv; hy += -Math.abs(sw2)*5*mv; }
     if(gunSide){ hx = hx + (10 - hx)*k; hy = hy + (-206 - hy)*k; }
+    else if(P.throwK!=null){ const t = P.throwK;
+      if(t < 0.6){ const u = t/0.6; hx = hx + (-38*B - hx)*u; hy = hy + (-312 - hy)*u; }           // wind up over the shoulder
+      else { const u = (t-0.6)/0.4; hx = -38*B + (2 + 38*B)*u; hy = -312 + (-232 + 312)*u; } }     // release towards you
     else if(P.twoHand && k>0.4){ const t=(k-0.4)/0.6; hx = hx + (-4 - hx)*t; hy = hy + (-198 - hy)*t; }
     const ex = (sx+hx)/2 + side*5*(1-k*0.6), ey = (sy+hy)/2 + 3;
     // deltoid
@@ -811,6 +816,7 @@ function drawFigure(c, L, P){
       c.restore();
     }
     handShape(c, hx, hy, Math.atan2(hy-ey, hx-ex) - Math.PI/2, glove, B);
+    if(!gunSide && P.throwItem) P.throwItem(c, hx, hy);
   }
   // poncho over shoulders and arms
   if(L.poncho){
@@ -1195,6 +1201,24 @@ function sfxBang(big, far){
   const g2 = ac.createGain(); g2.gain.setValueAtTime(0.7*v,t); g2.gain.exponentialRampToValueAtTime(0.001,t+0.18);
   o.connect(g2).connect(ac.destination); o.start(t); o.stop(t+0.2);
 }
+function sfxDart(){
+  // a sharp puff of breath and a dart whistling off
+  const ac = audio(); if(!ac) return; const t = ac.currentTime;
+  const src = ac.createBufferSource(); src.buffer = noiseBuf(ac, 0.35);
+  const f = ac.createBiquadFilter(); f.type='bandpass'; f.Q.value = 6; f.frequency.setValueAtTime(3200,t); f.frequency.exponentialRampToValueAtTime(900,t+0.3);
+  const g = ac.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.5,t+0.02); g.gain.exponentialRampToValueAtTime(0.001,t+0.32);
+  src.connect(f).connect(g).connect(ac.destination); src.start(t);
+  const o = ac.createOscillator(); o.type='sine'; o.frequency.setValueAtTime(2400,t+0.02); o.frequency.exponentialRampToValueAtTime(1200,t+0.28);
+  const g2 = ac.createGain(); g2.gain.setValueAtTime(0.0001,t); g2.gain.exponentialRampToValueAtTime(0.06,t+0.04); g2.gain.exponentialRampToValueAtTime(0.001,t+0.3);
+  o.connect(g2).connect(ac.destination); o.start(t); o.stop(t+0.32);
+}
+function sfxThrow(){
+  const ac = audio(); if(!ac) return; const t = ac.currentTime;
+  const src = ac.createBufferSource(); src.buffer = noiseBuf(ac, 0.4);
+  const f = ac.createBiquadFilter(); f.type='bandpass'; f.Q.value = 2; f.frequency.setValueAtTime(500,t); f.frequency.exponentialRampToValueAtTime(1600,t+0.35);
+  const g = ac.createGain(); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.35,t+0.15); g.gain.exponentialRampToValueAtTime(0.001,t+0.4);
+  src.connect(f).connect(g).connect(ac.destination); src.start(t);
+}
 function sfxBell(){
   const ac = audio(); if(!ac) return; const t = ac.currentTime;
   [660,990,1320].forEach((fr,i)=>{ const o=ac.createOscillator(); o.type= i?'sine':'square'; o.frequency.value=fr; const g=ac.createGain(); g.gain.setValueAtTime(0.22/(i+1),t); g.gain.exponentialRampToValueAtTime(0.001,t+0.9); o.connect(g).connect(ac.destination); o.start(t); o.stop(t+1); });
@@ -1385,7 +1409,7 @@ function newRound(){
   D.guns.forEach(g=>{ g.ammo = g.w.mag; g.clips = g.byRound ? 0 : SPARE_CLIPS; g.spare = g.byRound ? g.w.mag*SPARE_CLIPS : 0; });
   if(D.temp) D.temp.used = false;
   D.throws = []; D.fx = [];
-  D.npcTempAt = D.opp.temp ? 1e15 : null; D.opBuff = {};
+  D.npcTempAt = D.opp.temp ? 1e15 : null; D.opBuff = {}; D.opThrow = null; D.incoming = null; D.boomUntil = 0;
   renderDSlots();
   D.op = { hp:100, ammo:D.oppW.mag, clips:SPARE_CLIPS, state:'idle', stateT:0, nextShot:Infinity, dead:false, deadT:0, flinchUntil:0,
            x:0, tx:0, v:0, walk:0, lastFire:0, eff:{} };
@@ -1463,10 +1487,11 @@ function update(now, dt){
     }
     updateReloadBtn(now); updateScopeBtn();
     // thrown temporaries
-    updateThrows(now);
+    updateThrows(now); updateOppThrow(now); updateIncoming(now);
     // effects on opponent: burning damage
     if(!op.dead && oppHas('burning', now)){ op.hp -= EFFECTS.burning.dot * dt/1000 / MATCH_LEN; if(op.hp<=0){ op.dead = true; op.deadT = now; finishRound('win', 'Burned out', now); } }
     // effects on you
+    if(op.poisoned && !op.dead && now >= op.poisonNext){ op.poisonNext += 5000; damageOpp(1*MATCH_LEN, 'torso', now, true); }
     if(now < me.burnUntil){ me.hp -= 2.6 * dt/1000 * (me.buff.defense?0.5:1) / MATCH_LEN; if(me.hp<=0) finishRound('lose', `${D.opp.name} set you on fire`, now); }
     // NPC temporary
     if(D.npcTempAt && now >= D.npcTempAt && !op.dead && !D.roundOver){ D.npcTempAt = null; npcUseTemp(now); }
@@ -1598,14 +1623,14 @@ function playerFire(sx, sy){
     return;
   }
   if(now < me.nextTurn) return;
-  const n = Math.max(1, Math.round(w.rofMin + Math.random()*(w.rofMax - w.rofMin)));
+  const n = w.arch==='pistol' ? 1 : Math.max(1, Math.round(w.rofMin + Math.random()*(w.rofMax - w.rofMin)));
   me.burst = { left: Math.min(n, G.ammo), next: now, sx, sy, G };
 }
 function fireBullet(now){
   const me = D.me, b = me.burst, G = b.G, w = G.w;
   if(G !== curGun() || G.ammo<=0 || D.roundOver){ endBurst(now, w); return; }
   G.ammo--; b.left--; me.shots++; me.lastShot = now; updateAmmoText();
-  sfxBang(!!w.splash); D.shake = Math.min(1, D.shake + w.kick*RECOIL_SCALE/50); D.flash = Math.max(D.flash, w.arch==='mg'||w.arch==='smg' ? .12 : .28);
+  if(w.dart) sfxDart(); else { sfxBang(!!w.splash); D.shake = Math.min(1, D.shake + w.kick*RECOIL_SCALE/50); D.flash = Math.max(D.flash, w.arch==='mg'||w.arch==='smg' ? .12 : .28); }
   const sw = sway(now), dex = me.buff.dexterity ? 0.5 : 1;
   let cx, cy;
   if(D.mode==='motion'){ cx = W/2 + sw.x; cy = H/2 + sw.y; }
@@ -1631,6 +1656,7 @@ function fireBullet(now){
     if(d < rad && !D.op.dead){ total = per * 0.7 * (1 - d/rad); best='torso'; }
     addFx('explode', wc.x, wc.y, now, 700);
   }
+  if(w.dart && total>0 && !D.op.poisoned){ D.op.poisoned = true; D.op.poisonNext = now + 5000; setMsg('POISONED', `${D.opp.name} is losing 1% life every 5s`, 1200); }
   if(total>0){ me.hits++; damageOpp(total, best, now); }
   if(b.left<=0) endBurst(now, w);
   else b.next = now + w.burstGap * (me.buff.speed ? 0.5 : 1);
@@ -1721,25 +1747,77 @@ function updateThrows(now){
     else { applyEffect(info.effect, info.dur, now); setMsg(EFFECTS[info.effect].label, info.name, 900); }
   }
 }
+// Which temp the NPC is carrying, as a temp info object
+function npcTempInfo(){
+  const t = D.opp.temp; if(!t) return null;
+  if(t==='mirror') return tempInfo(D.opp.tempItem);
+  const nm = {molotov:'Molotov Cocktail', pepper:'Pepper Spray', heg:'HEG', flash:'Flash Grenade'}[t];
+  return nm ? tempInfo({name:nm, id:null}) : null;
+}
+// The NPC winds up and throws (or sprays / injects); the effect lands when it reaches you
 function npcUseTemp(now){
-  const me = D.me, nm = D.opp.name;
-  let t = D.opp.temp;
-  if(t==='mirror'){
-    const info = tempInfo(D.opp.tempItem); if(!info) return;
-    if(info.kind==='self'){ D.opBuff[info.buff] = true; setMsg(info.name.toUpperCase(), `${nm} used ${info.name}`, 1200); sfxClick(); return; }
-    if(info.kind==='blast' && !/heg|high explosive/i.test(info.name)){
-      const def = (me.buff.defense ? 0.5 : 1) * (1 - D.armour.reduce), dmg = info.dmg*0.75*def;
-      me.hp -= dmg/MATCH_LEN; me.hurt = Math.min(1, me.hurt+0.4); D.shake = 1; D.hurtFlash = 1; sfxBang(true); buzz([60,30,100]);
-      setMsg('EXPLOSION', `${nm} threw a ${info.name}`, 1100); if(me.hp<=0) finishRound('lose', `${nm}'s ${info.name} finished you`, now); return; }
-    const hz = {smoked:[5000,1.6,'SMOKED'], gassed:[5000,1.8,'GASSED'], dazed:[3500,2.2,'DAZED']}[info.effect];
-    if(hz){ me.hazeUntil = now + hz[0]; me.hazeMul = hz[1]; sfxBang(false); setMsg(hz[2], `${nm} threw ${info.name}`, 1100); return; }
-    t = info.effect==='blinded' ? 'flash' : info.effect==='burning' ? 'molotov' : info.effect==='peppered' ? 'pepper' : 'heg';
+  const info = npcTempInfo(); if(!info) return;
+  D.opThrow = {t0: now, info, img: info.id ? loadImg(ITEM_IMG(info.id)) : null, released:false};
+}
+function updateOppThrow(now){
+  const T = D.opThrow; if(!T) return;
+  const info = T.info, nm = D.opp.name, el = now - T.t0;
+  if(D.op.dead || D.roundOver){ D.opThrow = null; D.incoming = null; return; }
+  if(!T.released && el > 520){
+    T.released = true;
+    const g = oppGeom();
+    if(info.kind==='self'){ D.opBuff[info.buff] = true; D.opBuffFx = now; sfxClick(); setMsg(info.name.toUpperCase(), `${nm} used ${info.name}`, 1300); D.opThrow = null; return; }
+    sfxThrow();
+    D.incoming = {t0: now, dur: info.kind==='spray' ? 520 : 750, info, img: T.img, sx: g.x - g.h*0.07, sy: g.feet - g.h*1.02, spray: info.kind==='spray'};
+    setMsg(info.kind==='spray' ? 'INCOMING SPRAY' : 'INCOMING!', `${nm} threw a ${info.name}`, 800);
   }
+  if(T.released && !D.incoming) D.opThrow = null;
+}
+function updateIncoming(now){
+  const I = D.incoming; if(!I || now - I.t0 < I.dur) return;
+  D.incoming = null; D.opThrow = null;
+  if(D.roundOver) return;
+  const me = D.me, nm = D.opp.name, info = I.info;
   const def = (me.buff.defense ? 0.5 : 1) * (1 - D.armour.reduce);
-  if(t==='molotov'){ me.burnUntil = now + 4000; setMsg('ON FIRE', `${nm} threw a Molotov`, 1100); sfxBang(false,true); }
-  else if(t==='pepper'){ me.pepperUntil = now + 4000; setMsg('PEPPERED', `${nm} used Pepper Spray`, 1100); }
-  else if(t==='heg'){ const dmg = 24*def/MATCH_LEN; me.hp -= dmg; me.hurt = Math.min(1, me.hurt+0.5); D.shake = 1; D.hurtFlash = 1; sfxBang(true); buzz([60,30,120]); setMsg('EXPLOSION', `${nm} threw a HEG`, 1100); if(me.hp<=0) finishRound('lose', `${nm}'s HEG finished you`, now); }
-  else if(t==='flash'){ me.flashUntil = now + 3200; sfxBang(false); buzz(200); setMsg('BLINDED', `${nm} threw a Flash Grenade`, 1100); }
+  if(info.kind==='blast'){
+    const big = /heg|high explosive/i.test(info.name), dmg = (big ? 24 : info.dmg*0.75)*def/MATCH_LEN;
+    me.hp -= dmg; me.hurt = Math.min(1, me.hurt+0.5); D.shake = 1; D.hurtFlash = 1; D.boomUntil = now + 700; sfxBang(true); buzz([60,30,120]);
+    setMsg('EXPLOSION', `${nm}'s ${info.name} went off`, 1100); if(me.hp<=0) finishRound('lose', `${nm}'s ${info.name} finished you`, now); return;
+  }
+  if(info.effect==='blinded'){ me.flashUntil = now + 3200; sfxBang(false); buzz(200); setMsg('BLINDED', `${nm}'s Flash Grenade`, 1100); return; }
+  if(info.effect==='burning'){ me.burnUntil = now + 4000; sfxBang(false,true); setMsg('ON FIRE', `${nm}'s Molotov`, 1100); return; }
+  if(info.effect==='peppered'){ me.pepperUntil = now + 4000; setMsg('PEPPERED', `${nm}'s Pepper Spray`, 1100); return; }
+  const hz = {smoked:[5000,1.6,'SMOKED'], gassed:[5000,1.8,'GASSED'], dazed:[3500,2.2,'DAZED']}[info.effect];
+  if(hz){ me.hazeUntil = now + hz[0]; me.hazeMul = hz[1]; me.hazeType = info.effect; sfxBang(false, true); setMsg(hz[2], `${nm}'s ${info.name}`, 1100); }
+}
+// fallback drawings when there's no Torn item image
+function drawTempShape(c, info, sz){
+  const n = info.name||'';
+  if(/molotov/i.test(n)){ c.fillStyle='#4a6a3a'; c.beginPath(); c.ellipse(0, sz*0.15, sz*0.22, sz*0.35, 0, 0, 7); c.fill(); c.fillRect(-sz*0.07, -sz*0.45, sz*0.14, sz*0.3);
+    c.fillStyle='#ddd'; c.fillRect(-sz*0.05, -sz*0.6, sz*0.1, sz*0.16); c.fillStyle='rgba(255,150,30,.9)'; c.beginPath(); c.ellipse(0, -sz*0.72, sz*0.1, sz*0.16, 0, 0, 7); c.fill(); return; }
+  if(/smoke|tear gas|flash|concussion/i.test(n)){ c.fillStyle = /smoke/i.test(n) ? '#6a6d70' : /tear/i.test(n) ? '#7a7a3a' : /flash/i.test(n) ? '#9aa0a8' : '#3a4a5a';
+    c.fillRect(-sz*0.2, -sz*0.35, sz*0.4, sz*0.7); c.fillStyle='#222'; c.fillRect(-sz*0.2, -sz*0.15, sz*0.4, sz*0.06); c.fillStyle='#888'; c.fillRect(-sz*0.1, -sz*0.47, sz*0.2, sz*0.14); return; }
+  c.fillStyle = /heg/i.test(n) ? '#4a4a2a' : '#3a4a2c'; c.beginPath(); c.ellipse(0, 0, sz*0.3, sz*0.38, 0, 0, 7); c.fill();
+  c.strokeStyle='rgba(0,0,0,.4)'; c.lineWidth = sz*0.03; for(let k=-1;k<=1;k++){ c.beginPath(); c.moveTo(-sz*0.3, k*sz*0.12); c.lineTo(sz*0.3, k*sz*0.12); c.stroke(); }
+  c.fillStyle='#777'; c.fillRect(-sz*0.09, -sz*0.5, sz*0.18, sz*0.14); c.strokeStyle='#999'; c.lineWidth = sz*0.03; c.beginPath(); c.arc(sz*0.12, -sz*0.48, sz*0.08, 0, 7); c.stroke();
+}
+function drawTempItem(c, info, img, sz){
+  if(img && img.complete && img.naturalWidth) c.drawImage(img, -sz, -sz/2, sz*2, sz);
+  else drawTempShape(c, info, sz);
+}
+// incoming temp flying from the opponent towards you (world space, inside the camera transform)
+function drawIncoming(c, now){
+  const I = D.incoming; if(!I) return;
+  const cam = camera(), k = clamp((now - I.t0)/I.dur, 0, 1), tx = W*0.5 + cam.x, ty = H*0.78 + cam.y;
+  if(I.spray){
+    for(let i=0;i<18;i++){ const f = ((i/18) + k*1.6) % 1, x = I.sx + (tx - I.sx)*f + Math.sin(i*7+now/40)*f*W*0.05, y = I.sy + (ty - I.sy)*f + Math.cos(i*5+now/50)*f*H*0.03;
+      c.fillStyle = `rgba(255,${110+i*5},40,${0.6*(1-f*0.5)})`; c.beginPath(); c.arc(x, y, 2 + f*f*W*0.08, 0, 7); c.fill(); }
+    return;
+  }
+  const e = k*k;                                          // speeds up as it comes at you
+  const g = oppGeom(), x = I.sx + (tx - I.sx)*e, y = I.sy + (ty - I.sy)*e - Math.sin(k*Math.PI)*H*0.12, sz = g.h*0.09 + e*W*0.24;
+  for(let j=1;j<=4;j++){ const kk = clamp(k - j*0.05, 0, 1), ee = kk*kk; c.fillStyle = `rgba(255,255,255,${0.12/j})`; c.beginPath(); c.arc(I.sx + (tx - I.sx)*ee, I.sy + (ty - I.sy)*ee - Math.sin(kk*Math.PI)*H*0.12, sz*0.4, 0, 7); c.fill(); }
+  c.save(); c.translate(x, y); c.rotate(now/90); c.shadowColor = 'rgba(255,255,255,.6)'; c.shadowBlur = 8; drawTempItem(c, I.info, I.img, sz); c.restore();
 }
 
 function sway(now){
@@ -2087,6 +2165,7 @@ function render(now){
   drawOpponent(c, now);
   drawCover(c, now);
   drawEffects(c, now);
+  drawIncoming(c, now);
   drawOppOverlay(c, now);
   for(const h of D.holes){ c.fillStyle='rgba(10,10,10,.7)'; c.beginPath(); c.arc(h.x, h.y, 1.8, 0, 7); c.fill(); }
   for(const p of D.particles){ c.globalAlpha = 1 - p.t/p.life; c.fillStyle=p.c; c.beginPath(); c.arc(p.x, p.y, p.r, 0, 7); c.fill(); }
@@ -2099,6 +2178,10 @@ function render(now){
   const me = D.me;
   if(pep){ c.fillStyle = `rgba(200,60,20,${0.18 + 0.06*Math.sin(now/90)})`; c.fillRect(0,0,W,H); }
   if(now < me.burnUntil){ const g = c.createRadialGradient(W/2,H/2,H*0.25,W/2,H/2,H*0.7); g.addColorStop(0,'rgba(255,120,0,0)'); g.addColorStop(1,`rgba(255,110,0,${0.35+0.1*Math.sin(now/70)})`); c.fillStyle=g; c.fillRect(0,0,W,H); }
+  if(now < (me.hazeUntil||0)){ const left = (me.hazeUntil - now), a = Math.min(1, left/800);
+    if(me.hazeType==='dazed'){ c.save(); c.globalAlpha = 0.35*a; c.drawImage(cv, Math.sin(now/120)*W*0.03, Math.cos(now/150)*H*0.01, W, H); c.restore(); c.fillStyle=`rgba(40,50,70,${0.25*a})`; c.fillRect(0,0,W,H); }
+    else { const rgb = me.hazeType==='gassed' ? [190,200,110] : [175,175,180]; c.fillStyle = `rgba(${rgb},${0.28*a})`; c.fillRect(0,0,W,H); cloud(c, W*0.3, H*0.65, H*0.35, rgb, 0.55*a, now); cloud(c, W*0.75, H*0.45, H*0.32, rgb, 0.5*a, now+900); cloud(c, W*0.5, H*0.9, H*0.3, rgb, 0.5*a, now+400); } }
+  if(now < (D.boomUntil||0)){ const k = (D.boomUntil - now)/700, g2 = c.createRadialGradient(W/2,H*0.8,0,W/2,H*0.8,H*0.8); g2.addColorStop(0,`rgba(255,235,170,${0.9*k})`); g2.addColorStop(0.4,`rgba(255,130,30,${0.6*k})`); g2.addColorStop(1,'rgba(60,20,0,0)'); c.fillStyle=g2; c.fillRect(0,0,W,H); }
   if(now < me.flashUntil){ const k = (me.flashUntil - now)/3200; c.fillStyle = `rgba(255,255,255,${Math.min(0.97, k*1.15)})`; c.fillRect(0,0,W,H); }
   drawHUD(c, now);
   if(D.flash>0.02){ c.fillStyle=`rgba(255,240,220,${D.flash*0.3})`; c.fillRect(0,0,W,H); }
@@ -2123,7 +2206,9 @@ function drawOpponent(c, now){
   if(op.hiding) aim = 0;
   const spd = aiSpeeds(), mvAmt = Math.abs(op.v) / spd.walk, lean = clamp(op.v / spd.run, -1, 1) * 0.14;
   if(op.mode==='move' && op.running && aim > 0.5) aim = 0.4;   // gun lowered while running
-  drawFigureLit(c, o.look, { aim, move: mvAmt, lean, apose: (op.state==='idle' || op.state==='waiting') && !op.hiding, walk: op.walk + idle, gunLen: D.oppW.len, twoHand: ['rifle','shotgun','mg','smg','heavy'].includes(o.weapon), flash: now - op.lastFire < 70 }, 0, 0, g.u, {key:'opp', tint:'rgba(40,30,70,.12)'});
+  const TK = D.opThrow && !D.opThrow.released ? clamp((now - D.opThrow.t0)/520, 0, 1) : (D.incoming && now - D.incoming.t0 < 200 ? 1 : null);
+  const TI = D.opThrow ? D.opThrow : null;
+  drawFigureLit(c, o.look, { throwK: TK, throwItem: TI && TK!=null && TK < 0.85 ? ((cc,hx,hy)=>{ cc.save(); cc.translate(hx, hy-6); if(TI.info.kind==='self'){ cc.fillStyle='#ddd'; cc.fillRect(-2,-16,4,22); cc.fillStyle='#7ad04a'; cc.fillRect(-2,-10,4,10); } else drawTempItem(cc, TI.info, TI.img, 22); cc.restore(); }) : null, aim: TK!=null ? Math.min(aim, 0.3) : aim, move: mvAmt, lean, apose: (op.state==='idle' || op.state==='waiting') && !op.hiding, walk: op.walk + idle, gunLen: D.oppW.len, twoHand: ['rifle','shotgun','mg','smg','heavy'].includes(o.weapon), flash: now - op.lastFire < 70 }, 0, 0, g.u, {key:'opp', tint:'rgba(40,30,70,.12)'});
   c.restore(); c.restore();
   if(D.phase==='steady' || D.phase==='holster'){
     c.font=`bold ${Math.max(12,H*0.018)|0}px Arial`; c.textAlign='center'; c.textBaseline='alphabetic';
@@ -2361,6 +2446,9 @@ function drawEffects(c, now){
   if(oppHas('smoked', now)) cloud(c, cx, g.feet - g.h*0.55, g.h*0.55, [165,165,170], 0.5, now);
   if(oppHas('gassed', now)) cloud(c, cx, g.feet - g.h*0.6, g.h*0.5, [195,205,110], 0.45, now);
   if(oppHas('burning', now)) flames(c, cx, g.feet, g.h*0.32, 1, now);
+  if(now - (D.opBuffFx||-1e9) < 900){ const k = (now - D.opBuffFx)/900; c.strokeStyle = `rgba(120,230,80,${1-k})`; c.lineWidth = 3; c.beginPath(); c.ellipse(cx, g.feet - g.h*0.5, g.h*(0.2+k*0.15), g.h*(0.55+k*0.1), 0, 0, 7); c.stroke(); }
+  if(op.poisoned){ for(let i=0;i<5;i++){ const k = ((now/1400) + i/5) % 1; c.fillStyle = `rgba(110,220,60,${0.7*(1-k)})`; c.beginPath(); c.arc(cx + (i-2)*g.h*0.035, top + g.h*0.25 - k*g.h*0.22, g.h*0.012*(1+k), 0, 7); c.fill(); }
+    c.font = `bold ${Math.max(9, g.h*0.045)|0}px Arial`; c.textAlign='center'; c.fillStyle='#8ee05a'; c.fillText('POISONED', cx, top - g.h*0.06); }
   if(oppHas('peppered', now)){ c.fillStyle = 'rgba(255,90,30,.45)'; c.beginPath(); c.arc(cx, top + g.h*0.08, g.h*0.09, 0, 7); c.fill(); }
   if(oppHas('blinded', now) || oppHas('dazed', now)){
     for(let i=0;i<4;i++){ const a = now/300 + i*Math.PI/2; c.fillStyle = '#ffe36a'; c.font = `bold ${Math.max(10, g.h*0.07)|0}px Arial`; c.textAlign='center'; c.fillText('★', cx + Math.cos(a)*g.h*0.1, top - g.h*0.02 + Math.sin(a)*g.h*0.03); }
